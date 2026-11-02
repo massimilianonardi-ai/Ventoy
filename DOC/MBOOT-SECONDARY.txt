@@ -1,0 +1,89 @@
+m-boot secondary UEFI integration — experimental fork work
+=======================================================
+Status: source-only prototype, not compiled or boot-tested
+Base: ventoy/Ventoy master 74cff34240dca6991b79c6656770670da7b0c39e
+
+Goal
+----
+Keep m-boot's existing firmware boot and GRUB menu. Chainload an independent
+Ventoy GRUB EFI application only for ISO images that require Ventoy's
+compatibility mechanisms. Do not install Ventoy2Disk to the m-boot disk.
+
+Operator's confirmed original-Ventoy result
+-------------------------------------------
+The original Ventoy distribution has already booted the actual TrueNAS and
+Proxmox ISO images in the operator's environment. Do not rerun that baseline
+test merely to rediscover ISO compatibility; the remaining target is the
+secondary chainload from m-boot's disk layout.
+
+Existing m-boot disk after operator provisioning
+------------------------------------------------
+GPT 1: BIOS Boot
+GPT 2: FAT32, label MBOOTESP, 512 MiB (m-boot primary boot files)
+GPT 3: ext4, label MBOOTDATA, contains /m/boot/iso/
+
+Experimental layout of the SECONDARY application on GPT 2:
+    /ventoy-secondary/EFI/BOOT/grubx64_real.efi
+    /ventoy-secondary/grub/...
+    /ventoy-secondary/ventoy/...
+    /ventoy-secondary/tool/...
+
+Do not overwrite /EFI/BOOT/BOOTX64.EFI or /m/boot/loader on MBOOTESP.
+These paths are *target staging paths*, not files created by this patch.
+
+Implemented source adaptations on the experimental branch
+----------------------------------------------------------
+- GRUB2/MOD_SRC/grub-2.04/install.sh accepts the optional environment
+  variable VENTOY_GRUB_PREFIX, with unchanged upstream default '(,2)/grub'.
+  When building the secondary image, select:
+      VENTOY_GRUB_PREFIX='(,2)/ventoy-secondary/grub'
+  This is a GRUB build option, not a runtime setting of an existing EFI file.
+- INSTALL/grub/grub.cfg recognizes m-boot's ESP loader marker and the ISO
+  directory on GPT 3, selects GPT 3 for image enumeration, and confines
+  default image search to /m/boot/iso. Ordinary Ventoy stays GPT 1 / GPT 2.
+- grub-core/ventoy/ventoy_cmd.c separately validates the labeled FAT32 ESP
+  and ext4 data volumes for the opt-in alternative, preserves upstream's
+  original-device checks for normal Ventoy, and handles the 32 MiB size
+  assumption when the alternate layout has been positively verified.
+- The Ventoy EFI application's ISO9660/UDF driver paths select the nested
+  /ventoy-secondary/ventoy/ directory only for the m-boot opt-in.
+
+Safe test sequence (not yet executed)
+-------------------------------------
+1. Build the fork's GRUB 2.04 sources with the modified Ventoy module and
+   VENTOY_GRUB_PREFIX configured above. Follow the upstream source-build
+   requirements in DOC/BuildVentoyFromSource.txt; standard copied upstream
+   binaries do not contain this patch or embedded prefix.
+2. Build the modified EDK2 Ventoy UEFI application as well. The unmodified
+   ventoy_x64.efi binary does not contain the relocated ISO driver paths.
+3. Extract the complete Ventoy EFI filesystem resources from the built
+   distribution and stage them under /ventoy-secondary/ in the *disposable
+   QEMU disk* (not a physical USB). Preserve the original m-boot fallback
+   binary and menu. Ensure all GRUB modules and assets come from the
+   *same Ventoy build*, not m-boot's GRUB 2.12.
+4. With Secure Boot disabled in OVMF for the initial proof, chainload
+   /ventoy-secondary/EFI/BOOT/grubx64_real.efi directly from m-loader.
+   This intentionally bypasses shim only in the disposable test; Secure
+   Boot support has not been integrated.
+5. Verify in order: secondary GRUB initialization, m-boot GPT detection,
+   ISO enumeration on MBOOTDATA, UEFI chainloading of a selected ISO,
+   and post-kernel discovery/mount of the installation medium.
+6. Run corresponding regression checks on a disposable *standard* Ventoy
+   GPT image to ensure its existing layout check is preserved. The operator's
+   already successful original-Ventoy boot does not validate this changed
+   fork revision.
+
+Known limits / do not claim yet
+-------------------------------
+- No successful compiler/build run, OVMF run, kernel handoff, ARM64 boot,
+  Secure Boot chain or physical USB test has been obtained for this branch.
+- Upstream distribution packaging creates a VTOYEFI image at the standard
+  partition-root layout; a separate staging/export procedure will be needed
+  for the nested m-boot path. It does not appear automatically after build.
+- Upstream code may still contain other partition-number or filesystem
+  assumptions in the Linux/initramfs handoff and boot-specific handlers;
+  these remain to be identified through an actual boot and targeted review.
+- No change to m-boot product or the operator's real USB is authorized or
+  made in this source-only work unit.
+- Ventoy's upstream GPLv3 license and corresponding source obligations
+  continue to apply to modified redistributions.
