@@ -121,6 +121,8 @@ int g_ventoy_disk_bios_id = 0;
 ventoy_gpt_info *g_ventoy_part_info = NULL;
 grub_uint64_t g_ventoy_disk_size = 0;
 grub_uint64_t g_ventoy_disk_part_size[2];
+/* Set only after a positively verified m-boot GPT/volume layout. */
+static int g_mboot_secondary_valid = 0;
 
 char *g_tree_script_buf = NULL;
 int g_tree_script_pos = 0;
@@ -702,6 +704,77 @@ static int ventoy_check_official_device(grub_device_t dev)
     }
 
     return ventoy_set_check_result(0, NULL);
+}
+
+
+/*
+ * m-boot keeps its BIOS Boot partition at GPT 1, MBOOTESP at GPT 2,
+ * and MBOOTDATA at GPT 3. Accept only the expected volume labels and
+ * filesystems; ordinary Ventoy disks still use the original checks.
+ */
+static int ventoy_check_mboot_device(grub_device_t dev)
+{
+    char path[64];
+    char *esp_label = NULL;
+    char *data_label = NULL;
+    grub_device_t esp = NULL;
+    grub_device_t data = NULL;
+    grub_fs_t esp_fs = NULL;
+    grub_fs_t data_fs = NULL;
+    int valid = 0;
+
+    if (!dev || !dev->disk || !dev->disk->partition ||
+        dev->disk->partition->number != 0 ||
+        grub_memcmp(g_ventoy_part_info->Head.Signature, "EFI PART", 8) != 0)
+    {
+        return ventoy_set_check_result(13, "m-boot requires GPT and a first BIOS Boot partition");
+    }
+
+    grub_snprintf(path, sizeof(path), "%s,2", dev->disk->name);
+    esp = grub_device_open(path);
+    grub_snprintf(path, sizeof(path), "%s,3", dev->disk->name);
+    data = grub_device_open(path);
+
+    if (esp && data && esp->disk && data->disk &&
+        esp->disk->partition && data->disk->partition &&
+        esp->disk->partition->number == 1 &&
+        data->disk->partition->number == 2)
+    {
+        esp_fs = grub_fs_probe(esp);
+        data_fs = grub_fs_probe(data);
+        if (esp_fs && data_fs && esp_fs->fs_label && data_fs->fs_label &&
+            grub_strncmp(esp_fs->name, "fat", 3) == 0 &&
+            grub_strncmp(data_fs->name, "ext", 3) == 0)
+        {
+            esp_fs->fs_label(esp, &esp_label);
+            data_fs->fs_label(data, &data_label);
+            valid = esp_label && data_label &&
+                    grub_strcmp(esp_label, "MBOOTESP") == 0 &&
+                    grub_strcmp(data_label, "MBOOTDATA") == 0;
+        }
+    }
+
+    grub_free(esp_label);
+    grub_free(data_label);
+    if (esp)
+    {
+        grub_device_close(esp);
+    }
+    if (data)
+    {
+        grub_device_close(data);
+    }
+
+    return valid ? ventoy_set_check_result(0, NULL) :
+                   ventoy_set_check_result(14, "Expected FAT MBOOTESP partition 2 and ext4 MBOOTDATA partition 3");
+}
+
+static void ventoy_update_partition_sizes(void)
+{
+    /* Slot 0 denotes the image partition; slot 1 denotes the EFI partition. */
+    g_ventoy_disk_part_size[0] =
+        ventoy_get_vtoy_partsize(g_mboot_secondary_valid ? 2 : 0);
+    g_ventoy_disk_part_size[1] = ventoy_get_vtoy_partsize(1);
 }
 
 static int ventoy_check_ignore_flag(const char *filename, const struct grub_dirhook_info *info, void *data)
@@ -2877,7 +2950,10 @@ static grub_err_t ventoy_cmd_list_img(grub_extcmd_context_t ctxt, int argc, char
         return grub_error(GRUB_ERR_BAD_ARGUMENT, "Must clear image before list");
     }
 
-    VTOY_CMD_CHECK(1);
+    if (!g_mboot_secondary_valid)
+    {
+        VTOY_CMD_CHECK(1);
+    }
 
     g_enumerate_time_checked  = 0;
     g_enumerate_start_time_ms = grub_get_time_ms();
@@ -4351,7 +4427,10 @@ static grub_err_t ventoy_cmd_dynamic_menu(grub_extcmd_context_t ctxt, int argc, 
         return 0;
     }
 
-    VTOY_CMD_CHECK(1);
+    if (!g_mboot_secondary_valid)
+    {
+        VTOY_CMD_CHECK(1);
+    }
 
     if (args[0][0] == '0')
     {
@@ -5123,10 +5202,24 @@ int ventoy_load_part_table(const char *diskname)
 
     grub_snprintf(name, sizeof(name), "%s,1", diskname);
     dev = grub_device_open(name);
+    g_mboot_secondary_valid = 0;
     if (dev)
     {
-        /* Check for official Ventoy device */
-        ret = ventoy_check_official_device(dev);
+        const char *mboot_mode = grub_env_get("VTOY_MBOOT_SECONDARY");
+
+        if (mboot_mode && grub_strcmp(mboot_mode, "1") == 0)
+        {
+            ret = ventoy_check_mboot_device(dev);
+            if (ret == 0)
+            {
+                g_mboot_secondary_valid = 1;
+            }
+        }
+        else
+        {
+            /* Preserve Ventoy's normal disk-layout verification. */
+            ret = ventoy_check_official_device(dev);
+        }
         grub_device_close(dev);
 
         if (ret)
@@ -5135,8 +5228,7 @@ int ventoy_load_part_table(const char *diskname)
         }
     }
 
-    g_ventoy_disk_part_size[0] = ventoy_get_vtoy_partsize(0);
-    g_ventoy_disk_part_size[1] = ventoy_get_vtoy_partsize(1);
+    ventoy_update_partition_sizes();
 
     return 0;
 }
@@ -5209,8 +5301,7 @@ static grub_err_t ventoy_cmd_load_part_table(grub_extcmd_context_t ctxt, int arg
         ventoy_prompt_end();
     }
 
-    g_ventoy_disk_part_size[0] = ventoy_get_vtoy_partsize(0);
-    g_ventoy_disk_part_size[1] = ventoy_get_vtoy_partsize(1);
+    ventoy_update_partition_sizes();
 
     return 0;
 }
