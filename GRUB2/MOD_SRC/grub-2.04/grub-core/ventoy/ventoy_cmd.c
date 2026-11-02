@@ -723,9 +723,11 @@ static int ventoy_check_mboot_device(grub_device_t dev)
     grub_fs_t data_fs = NULL;
     int valid = 0;
 
-    if (!dev || !dev->disk || !dev->disk->partition ||
+    if (
+        !dev || !dev->disk || !dev->disk->partition ||
         dev->disk->partition->number != 0 ||
-        grub_memcmp(g_ventoy_part_info->Head.Signature, "EFI PART", 8) != 0)
+        grub_memcmp(g_ventoy_part_info->Head.Signature, "EFI PART", 8) != 0
+       )
     {
         return ventoy_set_check_result(13, "m-boot requires GPT and a first BIOS Boot partition");
     }
@@ -735,16 +737,20 @@ static int ventoy_check_mboot_device(grub_device_t dev)
     grub_snprintf(path, sizeof(path), "%s,3", dev->disk->name);
     data = grub_device_open(path);
 
-    if (esp && data && esp->disk && data->disk &&
+    if (
+        esp && data && esp->disk && data->disk &&
         esp->disk->partition && data->disk->partition &&
         esp->disk->partition->number == 1 &&
-        data->disk->partition->number == 2)
+        data->disk->partition->number == 2
+       )
     {
         esp_fs = grub_fs_probe(esp);
         data_fs = grub_fs_probe(data);
-        if (esp_fs && data_fs && esp_fs->fs_label && data_fs->fs_label &&
+        if (
+            esp_fs && data_fs && esp_fs->fs_label && data_fs->fs_label &&
             grub_strncmp(esp_fs->name, "fat", 3) == 0 &&
-            grub_strncmp(data_fs->name, "ext", 3) == 0)
+            grub_strncmp(data_fs->name, "ext", 3) == 0
+           )
         {
             esp_fs->fs_label(esp, &esp_label);
             data_fs->fs_label(data, &data_label);
