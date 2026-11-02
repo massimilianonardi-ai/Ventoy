@@ -1,6 +1,9 @@
 #!/bin/bash
 
 VT_DIR=$PWD/../../..
+# Upstream default is unchanged. For the isolated m-boot stage use:
+# VENTOY_GRUB_PREFIX='(,2)/ventoy-secondary/grub'
+VENTOY_GRUB_PREFIX=${VENTOY_GRUB_PREFIX:-'(,2)/grub'}
 
 rm -rf $VT_DIR/GRUB2/INSTALL
 rm -rf $VT_DIR/GRUB2/PXE
@@ -25,21 +28,21 @@ all_modules_mips64el_uefi="file setkey blocklist ventoy test true regexp newc se
 if [ "$1" = "uefi" ]; then
     all_modules="$net_modules_uefi $all_modules_uefi "
 
-    grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/x86_64-efi" --prefix '(,2)/grub' --output "$VT_DIR/INSTALL/EFI/BOOT/grubx64_real.efi"  --format 'x86_64-efi' --compression 'auto'  $all_modules_uefi
+    grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/x86_64-efi" --prefix "$VENTOY_GRUB_PREFIX" --output "$VT_DIR/INSTALL/EFI/BOOT/grubx64_real.efi"  --format 'x86_64-efi' --compression 'auto'  $all_modules_uefi
 
     #grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/x86_64-efi" -c "$VT_DIR/LiveCD/GRUB/embed.cfg" --prefix '/EFI/boot' --output "$VT_DIR/LiveCD/GRUB/bootx64.efi"  --format 'x86_64-efi' --compression 'auto'  $all_modules_uefi 'fat' 'part_msdos'
 elif [ "$1" = "i386efi" ]; then
     all_modules="$net_modules_uefi $all_modules_uefi "
 
-    grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/i386-efi" --prefix '(,2)/grub' --output "$VT_DIR/INSTALL/EFI/BOOT/grubia32_real.efi"  --format 'i386-efi' --compression 'auto'  $all_modules_uefi
+    grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/i386-efi" --prefix "$VENTOY_GRUB_PREFIX" --output "$VT_DIR/INSTALL/EFI/BOOT/grubia32_real.efi"  --format 'i386-efi' --compression 'auto'  $all_modules_uefi
 elif [ "$1" = "arm64" ]; then
     all_modules="$net_modules_uefi $all_modules_arm64_uefi "
 
-    grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/arm64-efi" --prefix '(,2)/grub' --output "$VT_DIR/INSTALL/EFI/BOOT/BOOTAA64.EFI"  --format 'arm64-efi' --compression 'auto'  $all_modules_arm64_uefi
+    grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/arm64-efi" --prefix "$VENTOY_GRUB_PREFIX" --output "$VT_DIR/INSTALL/EFI/BOOT/BOOTAA64.EFI"  --format 'arm64-efi' --compression 'auto'  $all_modules_arm64_uefi
 elif [ "$1" = "mips64el" ]; then
     all_modules="$net_modules_uefi $all_modules_mips64el_uefi "
 
-    grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/mips64el-efi" --prefix '(,2)/grub' --output "$VT_DIR/INSTALL/EFI/BOOT/BOOTMIPS.EFI"  --format 'mips64el-efi' --compression 'auto'  $all_modules_mips64el_uefi
+    grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/mips64el-efi" --prefix "$VENTOY_GRUB_PREFIX" --output "$VT_DIR/INSTALL/EFI/BOOT/BOOTMIPS.EFI"  --format 'mips64el-efi' --compression 'auto'  $all_modules_mips64el_uefi
 else
     all_modules="$net_modules_legacy $all_modules_legacy "
     grub-mkimage -v --directory "$VT_DIR/GRUB2/INSTALL/lib/grub/i386-pc" --prefix '(,2)/grub' --output "$VT_DIR/INSTALL/grub/i386-pc/core.img"  --format 'i386-pc' --compression 'auto'  $all_modules_legacy  'fat' 'part_msdos' 'biosdisk' 
