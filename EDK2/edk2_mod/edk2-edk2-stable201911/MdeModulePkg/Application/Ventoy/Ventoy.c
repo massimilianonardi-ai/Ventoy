@@ -64,6 +64,9 @@ ventoy_efi_file_replace g_img_file_replace[VTOY_MAX_CONF_REPLACE];
 
 CONST CHAR16 gIso9660EfiDriverPath[] = ISO9660_EFI_DRIVER_PATH;
 CONST CHAR16 gUdfEfiDriverPath[] = UDF_EFI_DRIVER_PATH;
+/* Same filesystem drivers, relocated under the optional m-boot ESP subtree. */
+STATIC CONST CHAR16 gMbootIso9660EfiDriverPath[] = L"\\ventoy-secondary" ISO9660_EFI_DRIVER_PATH;
+STATIC CONST CHAR16 gMbootUdfEfiDriverPath[] = L"\\ventoy-secondary" UDF_EFI_DRIVER_PATH;
 
 BOOLEAN g_fix_windows_1st_cdrom_issue = FALSE;
 
@@ -680,21 +683,25 @@ STATIC EFI_STATUS EFIAPI ventoy_load_isoefi_driver(IN EFI_HANDLE ImageHandle)
     EFI_HANDLE Image = NULL;
     EFI_STATUS Status = EFI_SUCCESS;
     CHAR16 LogVar[4] = L"5";
+    const char *mboot = grub_env_get ? grub_env_get("VTOY_MBOOT_SECONDARY") : NULL;
+    BOOLEAN mbootStage = mboot && mboot[0] == '1' && mboot[1] == 0;
 
     if (gIsoUdf)
     {
+        CONST CHAR16 *Path = mbootStage ? gMbootUdfEfiDriverPath : gUdfEfiDriverPath;
+        UINTN Size = mbootStage ? sizeof(gMbootUdfEfiDriverPath) : sizeof(gUdfEfiDriverPath);
+
         Status = ventoy_load_image(ImageHandle, gBlockData.pDiskFsDevPath,
-                                   gUdfEfiDriverPath,
-                                   sizeof(gUdfEfiDriverPath),
-                                   &Image);
+                                   Path, Size, &Image);
         debug("load iso UDF efi driver status:%r", Status);
     }
     else
     {
+        CONST CHAR16 *Path = mbootStage ? gMbootIso9660EfiDriverPath : gIso9660EfiDriverPath;
+        UINTN Size = mbootStage ? sizeof(gMbootIso9660EfiDriverPath) : sizeof(gIso9660EfiDriverPath);
+
         Status = ventoy_load_image(ImageHandle, gBlockData.pDiskFsDevPath,
-                                   gIso9660EfiDriverPath,
-                                   sizeof(gIso9660EfiDriverPath),
-                                   &Image);
+                                   Path, Size, &Image);
         debug("load iso 9660 efi driver status:%r", Status);
     }
 
