@@ -40,10 +40,17 @@ cp "$vars" "$output/vars.fd"
 cat > "$output/bootstrap.cfg" <<'EOF'
 serial --unit=0 --speed=115200
 terminal_output serial
-echo VTOY_NO_CORE_PROBE_START
+echo VTOY_NO_CORE_PROBE_BOOTSTRAP
 search --file --set=bootpart /vt-probe-boot.marker
-search --file --set=isopart /vt-probe-image.iso
+set prefix=($bootpart)/grub
+configfile ($bootpart)/grub/runtime.cfg
+EOF
+
+cat > "$output/runtime.cfg" <<'EOF'
+echo VTOY_NO_CORE_PROBE_START
 echo VTOY_BOOT_DEVICE=$bootpart
+ls
+search --file --set=isopart /vt-probe-image.iso
 echo VTOY_ISO_DEVICE=$isopart
 if [ -z "$bootpart" ] || [ -z "$isopart" ] || [ "$bootpart" = "$isopart" ]; then
   echo VTOY_NO_CORE_PROBE_DIFFERENT_DISKS_REQUIRED
@@ -63,7 +70,7 @@ grub-mkimage --format=x86_64-efi \
   --directory=/usr/lib/grub/x86_64-efi \
   --prefix=/grub --config="$output/bootstrap.cfg" \
   --output="$output/BOOTX64.EFI" \
-  part_gpt fat search search_fs_file serial terminal normal test echo halt
+  part_gpt fat search search_fs_file serial terminal normal configfile test echo halt ls
 
 # Each target is an isolated NEW GPT image, not a host or loop device.
 for target in boot iso; do
@@ -83,6 +90,7 @@ done
 mmd -i "$output/boot-part.img" ::/EFI ::/EFI/BOOT ::/grub ::/grub/x86_64-efi
 mcopy -i "$output/boot-part.img" "$output/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$output/boot-part.img" "$module" ::/grub/x86_64-efi/ventoy_source_probe.mod
+mcopy -i "$output/boot-part.img" "$output/runtime.cfg" ::/grub/runtime.cfg
 echo 'bootloader marker' > "$output/vt-probe-boot.marker"
 mcopy -i "$output/boot-part.img" "$output/vt-probe-boot.marker" ::/vt-probe-boot.marker
 
