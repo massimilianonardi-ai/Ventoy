@@ -269,8 +269,11 @@ jobs:
           src="$RUNNER_TEMP/mboot-usb-boot"
           path=GRUB2/dist/secondary-usb-uefi
           mkdir -p "$path"
-          cp "$src/boot-disk.raw.gz" "$src/SHA256SUMS" \
-             "$src/BUILD-INFO.txt" "$src/test-result.txt" "$path/"
+          cp "$src/boot-disk.raw.gz" "$src/BUILD-INFO.txt" \
+             "$src/test-result.txt" "$path/"
+          grep -F '  boot-disk.raw.gz' "$src/SHA256SUMS" > "$path/SHA256SUMS"
+          grep -F '  boot-disk.raw' "$src/SHA256SUMS" \
+            | grep -v -F '  boot-disk.raw.gz' > "$path/RAW-SHA256SUMS"
           ( cd "$path" && sha256sum -c SHA256SUMS )
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -289,6 +292,7 @@ jobs:
           path: |
             GRUB2/dist/secondary-usb-uefi/boot-disk.raw.gz
             GRUB2/dist/secondary-usb-uefi/SHA256SUMS
+            GRUB2/dist/secondary-usb-uefi/RAW-SHA256SUMS
             GRUB2/dist/secondary-usb-uefi/BUILD-INFO.txt
             GRUB2/dist/secondary-usb-uefi/test-result.txt
           retention-days: 14
