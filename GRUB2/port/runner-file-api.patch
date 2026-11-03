@@ -1,0 +1,68 @@
+--- a/grub-core/ventoy/ventoy_cmd.c
++++ b/grub-core/ventoy/ventoy_cmd.c
+@@ -565,5 +565,26 @@
+ }
+ 
+-static int ventoy_check_official_device(grub_device_t dev)
++static int ventoy_check_file_exist(const char *fmt, ...)
++{
++    va_list ap;
++    char path[256];
++    grub_file_t file;
++
++    va_start(ap, fmt);
++    grub_vsnprintf(path, sizeof(path), fmt, ap);
++    va_end(ap);
++
++    file = grub_file_open(path, GRUB_FILE_TYPE_NONE);
++    if (!file)
++    {
++        grub_errno = GRUB_ERR_NONE;
++        return 0;
++    }
++
++    grub_file_close(file);
++    return 1;
++}
++
++static int ventoy_check_official_device(grub_device_t dev)
+ {
+     int workaround = 0;
+@@ -1998,6 +2019,7 @@
+     int index = 0;
+     int vlnk = 0;
+-    grub_size_t len;
+-    img_info *img;
++    grub_size_t len;
++    grub_uint64_t file_size = 0;
++    img_info *img;
+     img_info *tail;
+     const menu_tip *tip;
+@@ -2172,7 +2194,17 @@
+         }
+ 
+-        if (info->size == VTOY_FILT_MIN_FILE_SIZE || info->size == 0)
+-        {
+-            if (grub_file_is_vlnk_suffix(filename, len))
++        /* GRUB 2.12 directory hooks do not carry file size. */
++        if (node->dir[0] == '/')
++        {
++            file_size = ventoy_grub_get_file_size("%s%s%s", g_iso_path, node->dir, filename);
++        }
++        else
++        {
++            file_size = ventoy_grub_get_file_size("%s/%s%s", g_iso_path, node->dir, filename);
++        }
++
++        if (file_size == VTOY_FILT_MIN_FILE_SIZE || file_size == 0)
++        {
++            if (grub_file_is_vlnk_suffix(filename, len))
+             {
+                 vlnk = 1;
+@@ -2193,5 +2225,5 @@
+             img->pathlen = grub_snprintf(img->path, sizeof(img->path), "%s%s", node->dir, img->name);
+ 
+-            img->size = info->size;
++            img->size = file_size;
+             if (vlnk || 0 == img->size)
+             {
