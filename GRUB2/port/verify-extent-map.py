@@ -246,6 +246,16 @@ def main():
         checked(int(actual_crc.group(1), 16) == efi_crc32,
                 f"EFI BlockIo CRC mismatch: {actual_crc.group(1)} "
                 f"vs source {efi_crc32:08x}")
+        virtual_crc = re.search(
+            r"VT_EFI_VIRTUAL_BLOCKIO_OK crc32=([0-9a-f]{8})", serial
+        )
+        checked(virtual_crc is not None,
+                "EFI failed to expose and read the temporary ISO BlockIo")
+        checked(int(virtual_crc.group(1), 16) == efi_crc32,
+                f"virtual ISO BlockIo CRC mismatch: {virtual_crc.group(1)} "
+                f"vs source {efi_crc32:08x}")
+        checked("VT_EFI_VIRTUAL_BLOCKIO_UNINSTALLED" in serial,
+                "temporary EFI BlockIo protocol was not safely removed")
     result = (
         "iso_map_verification=passed\n"
         "iso_format=iso9660\n"
@@ -261,6 +271,8 @@ def main():
         f"reconstructed_sha256={reconstructed.hexdigest()}\n"
         "checked_bytes=all\n"
         f"efi_blockio_full_iso_crc32={'verified' if verify_efi else 'not-tested'}\n"
+        f"efi_virtual_blockio_crc32={'verified' if verify_efi else 'not-tested'}\n"
+        f"efi_virtual_blockio_uninstalled={'verified' if verify_efi else 'not-tested'}\n"
         "grub_core_patched=no\n"
         "physical_device_writes=no\n"
     )
