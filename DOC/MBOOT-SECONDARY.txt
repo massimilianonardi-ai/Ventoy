@@ -427,3 +427,46 @@ Authentic EDK2 virtual CD, ISO filesystem and EFI StartImage proof:
   or shown to be consumed by this secondary flow. Full original Ventoy
   standard-mode regression also remains pending. No m-boot/main,
   Ventoy/master, original GRUB core, or physical USB modification.
+
+Operator USB / Proxmox experimental boot probe (not a release):
+- The source-independent x86_64 UEFI GPT boot image is generated from
+  actual, version-matched stock Ubuntu 24.04 GRUB 2.12 plus the native
+  ventoy_source_probe.mod and authentic VentoyEfiMain/EDK2 executable.
+  Its FAT32 ESP contains the original ISO9660 EFI driver. The image
+  requires a separate GPT disk exposing the real ISO on ext4 and does
+  not contain a copy of the installer ISO.
+- The source path is a builder operand, with the current dedicated
+  operator fixture targeting /m/boot/iso/proxmox-ve_9.2-1.iso. GRUB
+  discovers the actual partition by filename (not disk order/label),
+  reads its real sector extents through the original native handoff
+  and invokes the opt-in original Ventoy EFI virtual CD/StartImage.
+- The large-ISO boot probe (>16 MiB) verifies the original virtual CD
+  ISO9660 PVD through published original ReadBlocks; unlike the
+  diagnostic bounded small-ISO modes, it deliberately does NOT read
+  every large ISO sector for full CRC before firmware StartImage.
+  This check is not evidence of successful Proxmox kernel handoff.
+- The experimental CI creates a synthetic >16 MiB bootable EFI ISO,
+  stores it in a disposable ext4 GPT3 disk, invokes the PVD-only path,
+  verifies real EFI StartImage from inside the ISO and compares the
+  entire source GPT SHA before and after a qcow2-backed QEMU run.
+  The synthetic fixture is NOT a real Proxmox installer.
+- The persistent public boot-only image and compressed/raw SHA256
+  manifests are published under GRUB2/dist/secondary-usb-uefi only
+  AFTER those checks succeed. Any failed run is not a publication.
+- Operator runner GRUB2/port/run-physical-usb-uefi.sh uses the
+  original physical USB as a READ-ONLY qcow2 raw backing file, without
+  copying its ISO or repartitioning the device. It validates that
+  ISO is on the expected MBOOTDATA/ext4 GPT3 of a USB transport disk,
+  refuses other mounted partitions, requires typed confirmation,
+  unmounts USB data on the Ubuntu host, temporarily grants only
+  read access to the current user if needed, then runs x86_64 UEFI
+  QEMU TCG with snapshot and disabled monitor. It restores the
+  temporary permission when the test ends. It never runs as a
+  physical USB installer. If the disk remains mounted or cannot
+  be uniquely verified, abort rather than fall back to a copy.
+- User's Ubuntu ARM64 VM is only the HOST of the x86_64 UEFI emulator.
+  There is no Docker requirement or native ARM64 Ventoy EFI claim.
+  The user must visually confirm the actual Proxmox bootloader/kernel
+  and installer. ISO rediscovery after kernel handoff is a separate
+  acceptance property; no end-to-end installer success is inferred
+  from a synthetic EFI probe, successful build or firmware entry.
