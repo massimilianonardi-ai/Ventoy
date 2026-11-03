@@ -201,11 +201,22 @@ Real fragmented ISO extent-mapping proof (2026-11-03)
   one discontinuity, every byte equal, matching raw-disk and source
   SHA-256 d81a159af3486d48009fff44497631de3163eef350eecf47861b7d8ec97d7ef3.
   No physical disk was used. Neither m-boot main nor Ventoy master changed.
+- A further test-only verifier revision (fork SHA
+  84dab83880eb446231cc3cfead76421480497799) streams the raw-disk
+  / ISO byte comparison in 1 MiB chunks instead of loading the entire
+  ISO into host RAM. GitHub Actions run 41617967732 SUCCEEDED with the
+  same two noncontiguous physical extents, complete 2,471,936-byte
+  reconstruction, SHA-256 identical on both sides:
+  31871f5e8bc4b0855715c71208ab2cc166c522fc2e25c3c79a238607cfead2f8.
+  The ISO creation timestamp can change the per-run source checksum;
+  the tested invariant is source/raw reconstruction equality.
 - Test scope: one true ISO9660 filesystem on FAT32 on an extra GPT
   virtual disk. No ext4/exFAT, sparse-file handling, large multi-GB ISO,
-  EFI virtual CD or installer/root mount is validated yet. The mapper
-  returns byte extents rather than Ventoy's final firmware-sector-map
-  ABI; compatibility conversion and OS handoff remain open.
+  EFI virtual CD or installer/root mount is validated yet. The verifier
+  now uses bounded host RAM, but this does NOT itself prove performance
+  or correctness for multi-GB files. The mapper returns byte extents
+  rather than Ventoy's final firmware-sector-map ABI; compatibility
+  conversion and OS handoff remain open.
 
 Known limits / do not claim yet
 -------------------------------
