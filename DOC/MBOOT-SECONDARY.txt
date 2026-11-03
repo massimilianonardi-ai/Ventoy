@@ -1,6 +1,6 @@
 m-boot secondary UEFI integration — experimental fork work
 =======================================================
-Status: independent .mod built and real fragmented ISO9660 extent map verified in OVMF; NOT an OS boot
+Status: native Ventoy chunk/image-location ABI built in external .mod, FAT32/ext4 QEMU source proofs; NOT an OS boot
 Base: ventoy/Ventoy master 74cff34240dca6991b79c6656770670da7b0c39e
 
 Goal
@@ -210,13 +210,59 @@ Real fragmented ISO extent-mapping proof (2026-11-03)
   31871f5e8bc4b0855715c71208ab2cc166c522fc2e25c3c79a238607cfead2f8.
   The ISO creation timestamp can change the per-run source checksum;
   the tested invariant is source/raw reconstruction equality.
-- Test scope: one true ISO9660 filesystem on FAT32 on an extra GPT
-  virtual disk. No ext4/exFAT, sparse-file handling, large multi-GB ISO,
-  EFI virtual CD or installer/root mount is validated yet. The verifier
-  now uses bounded host RAM, but this does NOT itself prove performance
-  or correctness for multi-GB files. The mapper returns byte extents
-  rather than Ventoy's final firmware-sector-map ABI; compatibility
-  conversion and OS handoff remain open.
+- This earlier proof covers only one FAT32 fragmented source, not an
+  installed operating system. The following proof extends source mapping
+  to ext4 and validates the existing native Ventoy ABI structures.
+  EFI memory ownership, OS handoff, sparse-file support, multi-GB ISO
+  and actual installer/root mounting remain distinct validation tasks.
+
+Native Ventoy ABI conversion and ext4 source proof (2026-11-03)
+-------------------------------------------------------------
+- GRUB2/port/probe-extents.c now includes the ORIGINAL upstream
+  include/grub/ventoy.h, copied verbatim into the temporary runner-matched
+  GRUB source tree during the module-only build. It allocates genuine
+  ventoy_img_chunk and ventoy_image_location records IN GRUB MEMORY.
+  For each fully mapped 2048-byte-aligned image interval it converts
+  the real physical byte start to 512-byte disk sectors and the image
+  logical offset/count to 2048-byte image sectors. It requires complete
+  ordered coverage and fails on unaligned, missing or overflowing ranges.
+  No Ventoy-style substitute struct or GRUB core patch is used.
+- The independent Python verifier now also checks EVERY field in emitted
+  ventoy_img_chunk and ventoy_image_disk_region against the previously
+  raw-disk-verified file extents, including inclusive end-sector
+  semantics and region count. These diagnostic structs are released
+  after printing; their delivery to the distinct EDK2 Ventoy EFI
+  application has NOT been implemented or validated yet. This is
+  canonical ABI FORMATION, NOT a booting Ventoy chain.
+- Experimental workflow .github/workflows/probe-standalone-ventoy-module.yml
+  checks TWO scenarios in disposable OVMF: a physically fragmented ISO
+  on second-disk FAT32, and a densely allocated ISO on second-disk ext4.
+  ext4 uses the actual GRUB ext2 filesystem driver; neither image
+  contains an OS bootloader. Both are real xorriso ISO9660 files with
+  extracted payload compared to the input payload.
+- Important limitation discovered in a first ext4 test: mkfs.ext4 -d
+  preserved zero-only ISO padding as sparse logical blocks, and GRUB
+  ext2 returned "something wrong with extent" or an incomplete map.
+  The module correctly FAILED CLOSED; it did not invent backing sectors.
+  Only the diagnostic ISO fixture was adjusted: nonzero reserved/
+  alignment areas and xorriso -no-pad avoid sparse source blocks,
+  while ISO9660 file extraction verifies no payload loss. This is NOT
+  an installer-ISO patching recommendation or sparse-file support.
+- CI run 41626125648 at fork SHA
+  1b3651501af775554d7d6eb674752e93dbb693dd PASSED:
+  module_build=passed, grub_core_patched=no, grub_core_recompiled=no,
+  and BOTH OVMF cases had uefi_probe=passed,
+  iso_map_verification=passed, ventoy_chunk_abi=verified,
+  ventoy_image_location_abi=verified and checked_bytes=all.
+  FAT32: 2,164,736 bytes, 2 physical extents, 1 discontinuity;
+  ext4: 2,164,736 bytes, 1 physical extent, 0 discontinuities.
+  For each, source and raw-disk reconstructed SHA-256 agreed; image
+  timestamps vary between runs. No physical storage writes.
+- Still unvalidated: a REAL Proxmox/TrueNAS ISO boot, EFI virtual CD
+  presentation, use of ventoy_chain_head/ventoy_os_param for actual
+  device identity, injection of these records into the EFI application,
+  standard m-boot GPT3/ext4 path, sparse-file handling, other filesystems,
+  ARM64, Secure Boot and multi-GB image behavior.
 
 Known limits / do not claim yet
 -------------------------------
@@ -225,13 +271,13 @@ Known limits / do not claim yet
   incompatible Ventoy GRUB core API calls (EFI buffer, virtual-link,
   filesystem/blocklist, GRUB exit and GUID interfaces). This is NOT
   a successful Ventoy module build, firmware boot or release artifact.
-- The experimental module's OVMF/GRUB insmod, cross-disk file
-  metadata, AND mapping of a true fragmented ISO9660 filesystem have
-  passed independent tests. A complete Ventoy engine/EFI ISO chainloader
-  has NOT compiled or booted under m-boot; no installer mount, ARM64 boot,
-  Secure Boot or physical USB validation. Neither the earlier 44-byte
-  dummy .iso-named fixture NOR the new non-bootable ISO9660 test image
-  proves a real ISO operating-system boot.
+- Independent module insmod, real FAT32 and ext4 ISO source reads,
+  raw-disk file-sector reconstruction, and native Ventoy image-location
+  ABI formation have passed. The complete Ventoy ISO chainloader/EFI
+  executable has NOT been rebuilt or booted from m-boot; no EFI handoff,
+  installer/root mount, ARM64, Secure Boot or physical USB validation.
+  These diagnostic ISO9660 files are NON-BOOTABLE and must not be
+  counted as Proxmox or TrueNAS boots.
 - GRUB 2.04 is no longer the chosen build/release version; the old Ventoy
   overlay cannot be linked with current Ubuntu GRUB without a source port.
   Use a named runner OS image, not ubuntu-latest, and record actual package
