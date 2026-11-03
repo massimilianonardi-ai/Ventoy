@@ -6,6 +6,8 @@ on:
     paths:
       - .github/workflows/probe-standalone-ventoy-module.yml
       - GRUB2/port/probe-source.c
+      - GRUB2/port/probe-extents.c
+      - GRUB2/port/verify-extent-map.py
       - GRUB2/port/probe-standalone-module.sh
       - GRUB2/port/probe-standalone-uefi.sh
   workflow_dispatch:
@@ -60,7 +62,7 @@ jobs:
         run: |
           set -eu
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            qemu-system-x86 ovmf mtools gdisk dosfstools
+            qemu-system-x86 ovmf mtools gdisk dosfstools xorriso
           sh GRUB2/port/probe-standalone-uefi.sh \
             "$RUNNER_TEMP/standalone-source-probe/source/grub-core/ventoy_source_probe.mod" \
             "$RUNNER_TEMP/standalone-uefi-probe"
@@ -77,6 +79,8 @@ jobs:
             ${{ runner.temp }}/standalone-source-probe/configure.log
             ${{ runner.temp }}/standalone-source-probe/build.log
             ${{ runner.temp }}/standalone-uefi-probe/runtime-result.txt
+            ${{ runner.temp }}/standalone-uefi-probe/iso-map-verification.txt
+            ${{ runner.temp }}/standalone-uefi-probe/xorriso.log
             ${{ runner.temp }}/standalone-uefi-probe/qemu.log
             ${{ runner.temp }}/standalone-uefi-probe/boot-gpt.log
             ${{ runner.temp }}/standalone-uefi-probe/boot-fat.log
