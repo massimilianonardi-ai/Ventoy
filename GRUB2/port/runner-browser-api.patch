@@ -1,0 +1,50 @@
+--- a/grub-core/ventoy/ventoy_browser.c
++++ b/grub-core/ventoy/ventoy_browser.c
+@@ -172,8 +172,19 @@
+     fs->fs_label(dev, &Label);
+ 
+-    if (ventoy_check_file_exist("(%s)/.ventoyignore", partname))
+-    {
+-        return 0;
+-    }
++    {
++        char ignore_path[96];
++        grub_file_t ignore_file;
++
++        grub_snprintf(ignore_path, sizeof(ignore_path), "(%s)/.ventoyignore", partname);
++        ignore_file = grub_file_open(ignore_path, GRUB_FILE_TYPE_NONE);
++        if (ignore_file)
++        {
++            grub_file_close(ignore_file);
++            grub_free(Label);
++            grub_device_close(dev);
++            return 0;
++        }
++        grub_errno = GRUB_ERR_NONE;
++    }
+ 
+     if (g_tree_view_menu_style == 0)
+@@ -395,5 +406,5 @@
+     else
+     {
+-        grub_uint64_t fsize = info->size;
++        grub_uint64_t fsize = 0;
+         
+         if (!ventoy_browser_valid_filename(filename, len, &type))
+@@ -402,8 +413,12 @@
+         }
+ 
+-        if (grub_file_is_vlnk_suffix(filename, len))
+-        {
+-            return 0;
+-        }
++        /* A virtual-link descriptor is not an ISO payload. */
++        if (
++            (len > 9 && grub_strncmp(filename + len - 9, ".vlnk.", 6) == 0) ||
++            (len > 10 && grub_strncmp(filename + len - 10, ".vlnk.", 6) == 0)
++           )
++        {
++            return 0;
++        }
+ 
+         node = grub_zalloc(sizeof(browser_node));
