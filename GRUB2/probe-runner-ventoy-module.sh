@@ -51,7 +51,7 @@ EOF
     ./autogen.sh > "$output/autogen.log" 2>&1
     ./configure --with-platform=efi --target=x86_64 \
         --prefix="$output/stage" > "$output/configure.log" 2>&1
-    make -j 4 > "$output/build.log" 2>&1
+    make -C grub-core -j 4 ventoy.module > "$output/build.log" 2>&1
 ) || {
     result=$?
     printf 'module_compile=failed\nexit_status=%s\n' "$result" > "$output/summary.txt"
