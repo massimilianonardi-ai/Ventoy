@@ -149,8 +149,13 @@ vt_map_is_iso9660 (grub_file_t file)
  * Passing them to the independent EFI application remains a SEPARATE,
  * unimplemented step; this diagnostic does not chainload any ISO.
  */
+extern grub_err_t vt_probe_handoff (grub_file_t file, const char *source,
+                                    const ventoy_img_chunk *chunks,
+                                    grub_uint32_t count);
+
 static grub_err_t
-vt_map_build_ventoy (const struct vt_map_context *map, grub_file_t file)
+vt_map_build_ventoy (const struct vt_map_context *map, grub_file_t file,
+                     const char *source)
 {
   grub_uint32_t i;
   grub_uint64_t next_logical = 0;
@@ -264,6 +269,10 @@ vt_map_build_ventoy (const struct vt_map_context *map, grub_file_t file)
                    (unsigned) region->image_sector_count,
                    (unsigned long long) region->disk_start_sector);
     }
+  err = vt_probe_handoff (file, source, chunks, map->count);
+  if (err)
+    goto out;
+
   grub_printf ("VT_CHAIN_SUCCESS count=%u image_bytes=%llu\n",
                (unsigned) location->region_count,
                (unsigned long long) file->size);
@@ -370,7 +379,7 @@ vt_probe_extent_map (grub_command_t cmd __attribute__ ((unused)),
       goto out;
     }
 
-  err = vt_map_build_ventoy (&map, file);
+  err = vt_map_build_ventoy (&map, file, args[0]);
   if (err)
     goto out;
 
