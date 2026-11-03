@@ -8,6 +8,7 @@ on:
       - .github/workflows/probe-ventoy-module.yml
       - GRUB2/probe-runner-ventoy-module.sh
       - GRUB2/port/runner-efi-api.patch
+      - GRUB2/port/runner-browser-api.patch
   workflow_dispatch:
 
 permissions:
@@ -61,6 +62,7 @@ jobs:
             ${{ runner.temp }}/grub-module-source-info.txt
             ${{ runner.temp }}/ventoy-module-probe/summary.txt
             ${{ runner.temp }}/ventoy-module-probe/efi-port-apply.log
+            ${{ runner.temp }}/ventoy-module-probe/browser-port-apply.log
             ${{ runner.temp }}/ventoy-module-probe/autogen.log
             ${{ runner.temp }}/ventoy-module-probe/configure.log
             ${{ runner.temp }}/ventoy-module-probe/build.log
