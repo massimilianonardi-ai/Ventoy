@@ -26,29 +26,32 @@ cp "$overlay/include/grub/ventoy.h" "$output/source/include/grub/ventoy.h"
 
 # Explicit in-fork port patch, applied only to the runner-source copy.
 # The inherited 2.04 overlay remains unchanged for audit and comparison.
-patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
+if ! patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
     < "$(dirname "$0")/port/runner-efi-api.patch" \
-    > "$output/efi-port-apply.log" 2>&1 || {
+    > "$output/efi-port-apply.log" 2>&1
+then
     echo "EFI API port patch did not apply to the distribution tree" >&2
     cat "$output/efi-port-apply.log" >&2
     exit 7
-}
+fi
 
-patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
+if ! patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
     < "$(dirname "$0")/port/runner-browser-api.patch" \
-    > "$output/browser-port-apply.log" 2>&1 || {
+    > "$output/browser-port-apply.log" 2>&1
+then
     echo "GRUB 2.12 browser API port patch did not apply" >&2
     cat "$output/browser-port-apply.log" >&2
     exit 9
-}
+fi
 
-patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
+if ! patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
     < "$(dirname "$0")/port/runner-file-api.patch" \
-    > "$output/file-port-apply.log" 2>&1 || {
+    > "$output/file-port-apply.log" 2>&1
+then
     echo "File API port patch did not apply" >&2
     cat "$output/file-port-apply.log" >&2
     exit 10
-}
+fi
 
 # Ventoy's former GRUB core owns these policy variables. Restore their
 # definitions in the runner-source core; do not invent module-local stubs.
