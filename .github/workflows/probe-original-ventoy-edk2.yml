@@ -199,6 +199,9 @@ jobs:
         run: |
           set -euo pipefail
           bash -n GRUB2/port/prepare-usb-iso-boot-disk.sh
+          bash -n GRUB2/port/run-physical-usb-uefi.sh
+          bash GRUB2/port/run-physical-usb-uefi.sh --help >/dev/null
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-utils
           bundle="$RUNNER_TEMP/mboot-usb-boot"
           bash GRUB2/port/prepare-usb-iso-boot-disk.sh \
             "$RUNNER_TEMP/original-efi-grub-module/source/grub-core/ventoy_source_probe.mod" \
@@ -238,6 +241,9 @@ jobs:
           mkfs.ext4 -F -q -d "$RUNNER_TEMP/usb-source-tree" "$part"
           dd if="$part" of="$usb" bs=512 seek="$first" conv=notrunc status=none
           sgdisk --verify "$usb" >> "$bundle/usb-gpt.log"
+          before=$(sha256sum "$usb" | awk '{print $1}')
+          qemu-img create -f qcow2 -F raw -b "$usb" "$bundle/usb-overlay.qcow2"
+          qemu-img info "$bundle/usb-overlay.qcow2" | grep -F "backing file: $usb"
           ovmf_code=/usr/share/OVMF/OVMF_CODE_4M.fd
           ovmf_vars=/usr/share/OVMF/OVMF_VARS_4M.fd
           test -s "$ovmf_code" && test -s "$ovmf_vars"
@@ -249,12 +255,14 @@ jobs:
             -drive "if=pflash,format=raw,file=$bundle/test-vars.fd" \
             -drive "if=none,id=boot,format=raw,file=$bundle/boot-disk.raw" \
             -device virtio-blk-pci,drive=boot,bootindex=1 \
-            -drive "if=none,id=source,format=raw,file=$usb" \
+            -drive "if=none,id=source,format=qcow2,file=$bundle/usb-overlay.qcow2" \
             -device virtio-blk-pci,drive=source,bootindex=2 \
             -display none -monitor none -serial file:"$bundle/qemu-usb.log" \
             -snapshot -no-reboot
           rc=$?
           set -e
+          after=$(sha256sum "$usb" | awk '{print $1}')
+          test "$before" = "$after" || { echo "source disk changed"; exit 42; }
           if { test "$rc" -ne 0 && test "$rc" -ne 124; } ||
              ! grep -Fq 'VT_ORIGINAL_ISO_EFI_STARTIMAGE_EXECUTED' "$bundle/qemu-usb.log" ||
              ! grep -Fq 'VT_USB_SOURCE_STATUS=selected' "$bundle/qemu-usb.log" ||
