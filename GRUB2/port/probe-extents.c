@@ -342,7 +342,7 @@ vt_probe_extent_map (grub_command_t cmd __attribute__ ((unused)),
           char read_message[128];
 
           grub_snprintf (read_message, sizeof (read_message), "%s",
-                         grub_errmsg ? grub_errmsg : "(none)");
+                         grub_errmsg);
           grub_printf ("VT_MAP_READ_ERROR code=%u got=%ld expected=%lu "
                        "offset=%llu map=%d cause=%s\n",
                        (unsigned) read_errno, (long) got,
