@@ -27,6 +27,12 @@ typedef struct
   UINT8 path[24];
 } VT_VIRTUAL_MEDIA;
 
+static VOID
+vt_stage (EFI_SERIAL_IO_PROTOCOL *serial, const CHAR8 *message, UINTN length)
+{
+  uefi_call_wrapper (serial->Write, 3, serial, &length, (VOID *)message);
+}
+
 static UINT64
 vt_load_le (const UINT8 *data, UINTN size)
 {
@@ -224,6 +230,8 @@ vt_probe_virtual_media (EFI_SYSTEM_TABLE *system,
                               &path_guid, media.path, NULL);
   if (EFI_ERROR (status))
     goto done;
+  vt_stage (serial, "VT_EFI_VIRTUAL_INSTALLED\r\n",
+            sizeof ("VT_EFI_VIRTUAL_INSTALLED\r\n") - 1);
 
   status = uefi_call_wrapper (system->BootServices->LocateHandleBuffer, 5,
                               ByProtocol, &block_guid, NULL, &count, &handles);
@@ -252,6 +260,9 @@ vt_probe_virtual_media (EFI_SYSTEM_TABLE *system,
       goto unmount;
     }
 
+  vt_stage (serial, "VT_EFI_VIRTUAL_PUBLISHED\r\n",
+            sizeof ("VT_EFI_VIRTUAL_PUBLISHED\r\n") - 1);
+
   /* Negative protocol semantics: invalid media, unaligned size,
    * out-of-range LBA and attempts to modify the virtual CD. */
   if (uefi_call_wrapper (published->ReadBlocks, 5,
@@ -270,6 +281,9 @@ vt_probe_virtual_media (EFI_SYSTEM_TABLE *system,
       status = EFI_COMPROMISED_DATA;
       goto unmount;
     }
+
+  vt_stage (serial, "VT_EFI_VIRTUAL_NEGATIVE_TESTS_OK\r\n",
+            sizeof ("VT_EFI_VIRTUAL_NEGATIVE_TESTS_OK\r\n") - 1);
 
   for (next = 0; next < sectors;)
     {
@@ -294,6 +308,8 @@ vt_probe_virtual_media (EFI_SYSTEM_TABLE *system,
       next += blocks;
     }
   crc ^= 0xffffffffU;
+  vt_stage (serial, "VT_EFI_VIRTUAL_FULL_READ_DONE\r\n",
+            sizeof ("VT_EFI_VIRTUAL_FULL_READ_DONE\r\n") - 1);
   if (crc != source_crc)
     status = EFI_CRC_ERROR;
   else
