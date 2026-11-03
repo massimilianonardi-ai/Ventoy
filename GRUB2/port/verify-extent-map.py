@@ -71,11 +71,11 @@ def main():
     # only its generic physical byte ranges. These fields correspond to
     # ventoy_img_chunk and ventoy_image_disk_region in upstream ventoy.h.
     chain_head = re.search(
-        r"VT_CHAIN_HEADER count=(\\d+) image_sector=(\\d+) "
+        r"VT_CHAIN_HEADER count=(\d+) image_sector=(\d+) "
         r"disk_sector=(\\d+)", serial
     )
     chain_end = re.search(
-        r"VT_CHAIN_SUCCESS count=(\\d+) image_bytes=(\\d+)", serial
+        r"VT_CHAIN_SUCCESS count=(\d+) image_bytes=(\d+)", serial
     )
     checked(chain_head is not None and chain_end is not None,
             "no complete Ventoy ABI image-sector map")
@@ -91,14 +91,14 @@ def main():
     chunks = [
         tuple(map(int, row))
         for row in re.findall(
-            r"VT_CHAIN_CHUNK i=(\\d+) is=(\\d+) ie=(\\d+) "
+            r"VT_CHAIN_CHUNK i=(\d+) is=(\d+) ie=(\d+) "
             r"ds=(\\d+) de=(\\d+)", serial
         )
     ]
     regions = [
         tuple(map(int, row))
         for row in re.findall(
-            r"VT_LOCATION_REGION i=(\\d+) is=(\\d+) n=(\\d+) ds=(\\d+)",
+            r"VT_LOCATION_REGION i=(\d+) is=(\d+) n=(\d+) ds=(\d+)",
             serial
         )
     ]
