@@ -59,6 +59,7 @@ static grub_env_set_pf grub_env_set = NULL;
 /* Opt-in secondary source probe. Never changes upstream/default Ventoy mode.
  * A successful probe does not install CD BlockIo or boot an ISO. */
 STATIC BOOLEAN gMbootSourceProbe = FALSE;
+STATIC BOOLEAN gMbootMediaProbe = FALSE;
 STATIC UINT8 gMbootSourceGuid[16];
 STATIC UINTN gMbootChainBytes = 0;
 
@@ -780,6 +781,128 @@ done:
     return Status;
 }
 
+/* Exercise Ventoy's OWN production virtual BlockIo callbacks against
+ * the independently selected whole GPT disk. In this opt-in mode no
+ * installer starts. Validate the entire published CD payload against an
+ * independent host CRC and unpublish before returning to GRUB.
+ */
+STATIC EFI_STATUS ventoy_probe_secondary_media(IN EFI_HANDLE ImageHandle)
+{
+    EFI_STATUS Status;
+    EFI_STATUS CleanupStatus;
+    EFI_BLOCK_IO_PROTOCOL *Published = NULL;
+    UINT8 *Allocation = NULL;
+    UINT8 *ReadBuf = NULL;
+    UINT64 Lba = 0;
+    UINT64 Sectors;
+    UINT32 Crc = 0xffffffffU;
+    UINTN ByteCount;
+    UINTN i, j;
+    CHAR8 Result[9];
+    CONST CHAR8 HexDigits[] = "0123456789abcdef";
+    BOOLEAN Installed = FALSE;
+
+    if (!g_chain || !gBlockData.pRawBlockIo ||
+        !gBlockData.pRawBlockIo->Media ||
+        g_chain->virt_img_size_in_bytes == 0 ||
+        g_chain->virt_img_size_in_bytes > 16 * 1024 * 1024 ||
+        (g_chain->virt_img_size_in_bytes % 2048))
+    {
+        return EFI_UNSUPPORTED;
+    }
+
+    Sectors = g_chain->virt_img_size_in_bytes / 2048;
+    Status = ventoy_install_blockio(ImageHandle,
+                                     g_chain->virt_img_size_in_bytes);
+    if (EFI_ERROR(Status))
+    {
+        return Status;
+    }
+    Installed = TRUE;
+
+    Status = gBS->HandleProtocol(gBlockData.Handle, &gEfiBlockIoProtocolGuid,
+                                  (VOID **)&Published);
+    if (EFI_ERROR(Status) || Published != &gBlockData.BlockIo ||
+        !Published->Media || !Published->Media->ReadOnly ||
+        Published->Media->BlockSize != 2048 ||
+        Published->Media->LastBlock + 1 != Sectors)
+    {
+        Status = EFI_COMPROMISED_DATA;
+        goto cleanup;
+    }
+    grub_env_set("vt_original_virtual_published", "yes");
+
+    Allocation = AllocatePool(32 * 2048 + 4096);
+    if (!Allocation)
+    {
+        Status = EFI_OUT_OF_RESOURCES;
+        goto cleanup;
+    }
+    ReadBuf = (UINT8 *)(((UINTN)Allocation + 4095) & ~(UINTN)4095);
+    for (Lba = 0; Lba < Sectors; )
+    {
+        UINTN Take = (UINTN)(Sectors - Lba);
+        if (Take > 32)
+        {
+            Take = 32;
+        }
+        ByteCount = Take * 2048;
+        Status = Published->ReadBlocks(Published, Published->Media->MediaId,
+                                       Lba, ByteCount, ReadBuf);
+        if (EFI_ERROR(Status))
+        {
+            goto cleanup;
+        }
+        for (i = 0; i < ByteCount; i++)
+        {
+            Crc ^= ReadBuf[i];
+            for (j = 0; j < 8; j++)
+            {
+                Crc = (Crc >> 1) ^
+                    ((Crc & 1) ? 0xedb88320U : 0U);
+            }
+        }
+        Lba += Take;
+    }
+    Crc ^= 0xffffffffU;
+    for (i = 0; i < 8; i++)
+    {
+        Result[i] = HexDigits[(Crc >> (28 - i * 4)) & 15];
+    }
+    Result[8] = 0;
+    grub_env_set("vt_original_virtual_crc32", Result);
+    Status = EFI_SUCCESS;
+
+cleanup:
+    if (Allocation)
+    {
+        FreePool(Allocation);
+    }
+    if (Installed)
+    {
+        gBS->DisconnectController(gBlockData.Handle, NULL, NULL);
+        CleanupStatus = gBS->UninstallMultipleProtocolInterfaces(
+                            gBlockData.Handle,
+                            &gEfiBlockIoProtocolGuid, &gBlockData.BlockIo,
+                            &gEfiDevicePathProtocolGuid, gBlockData.Path,
+                            NULL);
+        if (EFI_ERROR(CleanupStatus))
+        {
+            Status = CleanupStatus;
+        }
+        else
+        {
+            grub_env_set("vt_original_virtual_uninstalled", "yes");
+        }
+    }
+    if (gBlockData.Path)
+    {
+        FreePool(gBlockData.Path);
+        gBlockData.Path = NULL;
+    }
+    return Status;
+}
+
 STATIC EFI_STATUS EFIAPI ventoy_find_iso_disk(IN EFI_HANDLE ImageHandle)
 {
     UINTN i = 0;
@@ -1203,8 +1326,10 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
 
     /* Only the explicitly opted-in diagnostic uses secondary GPT identity.
      * The upstream Ventoy device-check result is still required above. */
-    if (StrStr(pCmdLine, L"mboot_source_probe=1"))
+    if (StrStr(pCmdLine, L"mboot_source_probe=1") ||
+        StrStr(pCmdLine, L"mboot_media_probe=1"))
     {
+        gMbootMediaProbe = StrStr(pCmdLine, L"mboot_media_probe=1") != NULL;
         const char *Mode = grub_env_get("VTOY_MBOOT_SECONDARY");
         if (!Mode || Mode[0] != '1' || Mode[1] != 0)
         {
@@ -1561,6 +1686,12 @@ EFI_STATUS EFIAPI VentoyEfiMain
         Status = ventoy_find_secondary_source();
         grub_env_set("vt_original_source_probe",
                      EFI_ERROR(Status) ? "rejected" : "selected");
+        if (!EFI_ERROR(Status) && gMbootMediaProbe)
+        {
+            Status = ventoy_probe_secondary_media(ImageHandle);
+            grub_env_set("vt_original_media_probe",
+                         EFI_ERROR(Status) ? "rejected" : "verified");
+        }
         if (g_chain)
         {
             FreePool(g_chain);
