@@ -103,11 +103,12 @@ what Ventoy changed, NOT a GRUB core patch to be deployed.
    diagnostic module reads source device, partition, filesystem and file
    size by standard grub_file_open; it is NOT an ISO boot implementation.
    Build/make generation must not compile or patch GRUB kernel/core.
-2. Load the resulting .mod dynamically with standard m-boot GRUB in a
-   disposable UEFI QEMU test. Verify an ISO on the normal local data
-   partition and an image on a second virtual disk without VLNK or
-   reliance on Ventoy disk branding. Compile success alone does not
-   establish actual load/runtime behavior.
+2. Load the resulting .mod dynamically with the unchanged m-boot GRUB
+   in a disposable UEFI QEMU test. Then verify an ACTUAL bootable ISO on
+   the normal data partition and on a second virtual disk without VLNK.
+   The completed diagnostic test below is a precursor using an unmodified
+   Ubuntu GRUB image and a non-bootable file named .iso; the m-boot
+   integration, ISO boot and installer mount remain pending.
 3. Rework the existing Ventoy module by deleting fake VLNK routing and
    callers that use .vlnk suffix recognition to synthesize a same-partition
    image path. Identify the selected ISO by its REAL openable GRUB
@@ -148,6 +149,29 @@ Observed dependencies:
   to the image boot engine, not reasons to patch the core.
 - No standalone/full Ventoy module has been proven boot-capable yet.
 
+Actual independent-module proof (Ubuntu 24.04 runner, 2026-11-03)
+----------------------------------------------------------------
+- GitHub Actions run 41606705460: compiled a real ELF64 relocatable
+  ventoy_source_probe.mod using runner source/tools GRUB 2.12-1ubuntu7.3.
+  GRUB's genmod/module verifier accepted the GPLv3+ diagnostic module;
+  no GRUB core sources modified or compiled. This was NOT a boot test.
+- Run 41608256104: OVMF booted a GRUB EFI application assembled from
+  standard Ubuntu GRUB modules and dynamically loaded the external .mod.
+  A separate GPT virtual disk appeared as (hd1,gpt1); the module opened
+  /vt-probe-image.iso on that disk and reported disk=hd1,
+  partition=1, start=2048, fs=fat, bytes=44. This was a NON-BOOTABLE
+  44-byte filename fixture, and that run's CI outcome was failure only
+  because its log-check assumed 'fs=' and 'bytes=' on the same line,
+  although GRUB serial output wrapped them.
+- Run 41608492305: successful GitHub Actions rerun with wrap-tolerant
+  checks, including genuine OVMF boot, two disposable file-backed
+  GPT disks, independent insmod, cross-disk source metadata, and
+  qemu_exit=0. No physical storage device was written.
+- Both results prove standard-GRUB module compilation/insmod and reading
+  an arbitrarily located source file, NOT working Ventoy ISO mapping,
+  UEFI virtual CD, Proxmox/TrueNAS boot, kernel/initramfs handoff,
+  Secure Boot, ARM64 or actual m-boot product integration.
+
 Known limits / do not claim yet
 -------------------------------
 - GitHub Actions source-compile probe `41600842303` applied all three
@@ -155,9 +179,11 @@ Known limits / do not claim yet
   incompatible Ventoy GRUB core API calls (EFI buffer, virtual-link,
   filesystem/blocklist, GRUB exit and GUID interfaces). This is NOT
   a successful Ventoy module build, firmware boot or release artifact.
-- No successful custom Ventoy GRUB compilation/build, OVMF run, kernel
-  handoff, ARM64 boot, Secure Boot chain or physical USB test has been
-  obtained for this branch. A stock-runner GRUB probe is not such a build.
+- The experimental module's OVMF/GRUB insmod and cross-disk metadata
+  proof HAS succeeded, but a complete custom Ventoy engine/EFI ISO
+  chainloader has NOT compiled or booted under m-boot. There is still no
+  installer mount, ARM64 boot, Secure Boot or physical USB validation.
+  Do not mistake the 44-byte .iso-named fixture for a real ISO.
 - GRUB 2.04 is no longer the chosen build/release version; the old Ventoy
   overlay cannot be linked with current Ubuntu GRUB without a source port.
   Use a named runner OS image, not ubuntu-latest, and record actual package
