@@ -320,3 +320,21 @@ GPT source-selection proof (diagnostic only):
   GUID. The original EDK2 application's env_param integration, virtual-CD
   boot/catalog, real Proxmox/TrueNAS installs and post-kernel root mounting
   are not established by this disposable diagnostic.
+
+Original env_param ABI handoff diagnostic (experimental):
+- The upstream GRUB-side ventoy_grub_param is now allocated in the stock
+  GRUB module, populated with the real grub_env_get/grub_env_set/grub_printf
+  addresses (no substitutes), retained alongside the native chain header
+  until EFI StartImage returns, and released when the module is unloaded.
+- Only after GRUB source/GPT and complete sector-map validation succeeds
+  does the diagnostic set VTOY_CHKDEV_RESULT_STRING=0. This signals a
+  successful source-map preflight, NOT a successful original Ventoy disk
+  branding check or a bootable installer.
+- Diagnostic GNU-EFI receives original env_param=0x... LoadOptions and
+  calls the live GRUB getter through the upstream structure's first field;
+  it requires the real source GPT GUID in GRUB env to match its own
+  independent EFI-side GPT validation. No mock callback is used.
+- The GNU-EFI consumer is NOT the original Ventoy EDK2 app. Building and
+  exercising unmodified VentoyEfiMain/VentoyProtocol.c with this ABI,
+  implementing secondary real-disk validation in that app, and then
+  boot-catalog/installer handoff remain explicit next steps.

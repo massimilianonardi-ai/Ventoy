@@ -95,7 +95,8 @@ check_chain (EFI_LOADED_IMAGE *loaded, const UINT8 **chain_out,
   return EFI_SUCCESS;
 }
 
-/* Extra test-only LoadOptions token, NOT the upstream env_param ABI. */
+/* Extra GPT source-identity token, separate from the original
+ * env_param object used by Ventoy's original EDK2 code. */
 static EFI_STATUS
 parse_gpt_guid (EFI_LOADED_IMAGE *image, UINT8 guid[16])
 {
@@ -130,6 +131,75 @@ parse_gpt_guid (EFI_LOADED_IMAGE *image, UINT8 guid[16])
   return EFI_INVALID_PARAMETER;
 }
 
+/* The original GRUB-side ventoy_grub_param begins with
+ * grub_env_get_pf. We consume ONLY that original leading field here,
+ * rather than inventing a replacement environment or a success stub.
+ * The full object (including set, replacements, printf) is allocated
+ * using the upstream ventoy.h inside the GRUB module. */
+typedef const char *(*vt_grub_env_get_pf) (const char *);
+
+static EFI_STATUS
+check_original_env_param (EFI_LOADED_IMAGE *loaded,
+                          const UINT8 gpt_guid[16])
+{
+  static const CHAR16 keyword[] = L"env_param=0x";
+  const CHAR16 *option = (const CHAR16 *) loaded->LoadOptions;
+  UINTN count = loaded->LoadOptionsSize / sizeof (CHAR16);
+  UINTN i, j, digit, seen;
+  UINT64 address;
+  vt_grub_env_get_pf get;
+  const char *check_result;
+  const char *source_guid;
+  static const char hex[] = "0123456789abcdef";
+
+  if (!option || (loaded->LoadOptionsSize % sizeof (CHAR16)) != 0)
+    return EFI_INVALID_PARAMETER;
+  for (i = 0; i + 13 < count; ++i)
+    {
+      if (i && option[i - 1] != L' ')
+        continue;
+      for (j = 0; j < 12 && option[i + j] == keyword[j]; ++j)
+        ;
+      if (j != 12)
+        continue;
+
+      address = 0;
+      seen = 0;
+      for (j = i + 12; j < count && (digit = hex_digit (option[j])) != 255;
+           ++j)
+        {
+          if (address > ((~(UINT64)0 - digit) >> 4))
+            return EFI_INVALID_PARAMETER;
+          address = (address << 4) | digit;
+          ++seen;
+        }
+      if (!seen || !address || address > (UINT64)(UINTN)(~(UINTN)0)
+          || (address % sizeof (UINTN))
+          || (j < count && option[j] != L' ' && option[j] != 0))
+        return EFI_INVALID_PARAMETER;
+
+      /* Unlike a text-only simulation, this calls the actual GRUB
+       * function at the original ABI's first-field pointer. */
+      CopyMem (&get, (const VOID *)(UINTN)address, sizeof (get));
+      if (!get)
+        return EFI_COMPROMISED_DATA;
+      check_result = get ("VTOY_CHKDEV_RESULT_STRING");
+      if (!check_result || check_result[0] != '0' || check_result[1])
+        return EFI_SECURITY_VIOLATION;
+      source_guid = get ("vt_probe_gpt_guid");
+      if (!source_guid)
+        return EFI_SECURITY_VIOLATION;
+      for (j = 0; j < 16; ++j)
+        if (source_guid[2 * j] != hex[gpt_guid[j] >> 4]
+            || source_guid[2 * j + 1] != hex[gpt_guid[j] & 15])
+          return EFI_SECURITY_VIOLATION;
+      if (source_guid[32])
+        return EFI_SECURITY_VIOLATION;
+      return EFI_SUCCESS;
+    }
+  return EFI_INVALID_PARAMETER;
+}
+
 /* GNU-EFI crt0 calls efi_main using SysV C ABI, unlike firmware
  * protocol methods. Do not mark this entrypoint EFIAPI. */
 EFI_STATUS
@@ -158,12 +228,20 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
   status = parse_gpt_guid (loaded, gpt_guid);
   if (EFI_ERROR (status))
     return status;
+  status = check_original_env_param (loaded, gpt_guid);
+  if (EFI_ERROR (status))
+    return status;
 
   status = uefi_call_wrapper (system->BootServices->LocateProtocol, 3,
                               &serial_guid, NULL, (VOID **)&serial);
   if (EFI_ERROR (status) || !serial)
     return EFI_NOT_FOUND;
 
+  {
+    CHAR8 begin[] = "VT_EFI_ORIGINAL_ENV_PARAM_OK\r\n";
+    bytes = sizeof (begin) - 1;
+    uefi_call_wrapper (serial->Write, 3, serial, &bytes, begin);
+  }
   {
     CHAR8 begin[] = "VT_EFI_BLOCKMAP_BEGIN\r\n";
     bytes = sizeof (begin) - 1;

@@ -77,7 +77,7 @@ if [ -n "$efi_probe" ]; then
   cat >> "$output/runtime.cfg" <<'EOF'
 echo VTOY_EFI_MEMORY_BRIDGE_START
 if [ -n "$vt_probe_chain_addr" ]; then
-  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size gptguid:$vt_probe_gpt_guid
+  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size gptguid:$vt_probe_gpt_guid env_param=$vt_probe_env_addr
   if boot; then
     echo VTOY_EFI_MEMORY_BRIDGE_RETURNED
   else
@@ -287,7 +287,8 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
       "$output/qemu.log" "$output/vt-map-image.iso" \
       "$output/iso-disk.img" "$output/iso-map-verification.txt" \
       "$min_extents" "$part_num" efi
-    if ! grep -q 'VT_EFI_GPT_DISK_SELECTED' "$output/qemu.log" ||
+    if ! grep -q 'VT_EFI_ORIGINAL_ENV_PARAM_OK' "$output/qemu.log" ||
+       ! grep -q 'VT_EFI_GPT_DISK_SELECTED' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_MEMORY_HANDOFF_OK' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_BLOCKMAP_OK crc32=' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_VIRTUAL_BLOCKIO_OK crc32=' "$output/qemu.log" ||
@@ -299,6 +300,7 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
       exit 8
     fi
     echo 'efi_memory_bridge=passed' >> "$output/runtime-result.txt"
+    echo 'efi_original_env_param_callbacks=verified' >> "$output/runtime-result.txt"
     echo 'efi_gpt_collision=resolved' >> "$output/runtime-result.txt"
     echo 'efi_blockio_full_iso_crc32=verified' >> "$output/runtime-result.txt"
     echo 'efi_virtual_blockio_crc32=verified' >> "$output/runtime-result.txt"

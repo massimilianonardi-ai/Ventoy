@@ -1,5 +1,6 @@
-/* Diagnostic-only preparation of an ORIGINAL Ventoy chain layout.
- * Does not invoke an EFI image, expose a virtual CD or retain pointers.
+/* Diagnostic-only preparation of original Ventoy chain and env_param
+ * structures for a stock-GRUB-to-GNU-EFI memory bridge.
+ * No ISO boot or runtime EFI virtual device is implemented here.
  */
 #include <grub/types.h>
 #include <grub/file.h>
@@ -12,9 +13,10 @@
 #include <grub/env.h>
 #include <grub/ventoy.h>
 
-/* Retain until the GRUB module is unloaded; EFI StartImage can copy
- * this buffer while GRUB is still resident. Not a runtime services buffer. */
+/* Keep both original Ventoy ABI objects in GRUB memory until StartImage
+ * returns or this module is unloaded. Neither survives GRUB teardown. */
 static ventoy_chain_head *vt_pending_chain;
+static ventoy_grub_param *vt_pending_env;
 
 void vt_release_handoff_probe (void);
 
@@ -22,7 +24,11 @@ void
 vt_release_handoff_probe (void)
 {
   grub_free (vt_pending_chain);
+  grub_free (vt_pending_env);
   vt_pending_chain = 0;
+  vt_pending_env = 0;
+  grub_env_unset ("vt_probe_env_addr");
+  grub_env_unset ("VTOY_CHKDEV_RESULT_STRING");
   grub_env_unset ("vt_probe_chain_addr");
   grub_env_unset ("vt_probe_chain_size");
   grub_env_unset ("vt_probe_gpt_guid");
@@ -38,6 +44,7 @@ vt_probe_handoff (grub_file_t file, const char *path,
 {
   grub_disk_t disk = 0;
   ventoy_chain_head *chain = 0;
+  ventoy_grub_param *env_param = 0;
   ventoy_os_param *os;
   const grub_uint8_t *raw;
   grub_uint8_t sector[512];
@@ -147,6 +154,26 @@ vt_probe_handoff (grub_file_t file, const char *path,
   grub_memcpy ((grub_uint8_t *) chain + chain->img_chunk_offset,
                chunks, (grub_size_t) count * sizeof (*chunks));
 
+  /* Populate the original GRUB-side Ventoy ABI with REAL exported
+   * functions, as upstream ventoy_cmd.c does. The preceding source,
+   * GPT and extent checks provide the diagnostic device-check result.
+   * This is NOT a statement of compatibility with the full Ventoy
+   * standard two-partition layout or successful installer boot. */
+  env_param = grub_zalloc (sizeof (*env_param));
+  if (!env_param)
+    {
+      error = grub_errno;
+      goto done;
+    }
+  env_param->grub_env_get = grub_env_get;
+  env_param->grub_env_set = (grub_env_set_pf) grub_env_set;
+  env_param->grub_env_printf = (grub_env_printf_pf) grub_printf;
+  if (grub_env_set ("VTOY_CHKDEV_RESULT_STRING", "0"))
+    {
+      error = grub_errno;
+      goto done;
+    }
+
   grub_printf ("VT_HANDOFF head=%u bytes=%u offset=%u count=%u\n",
                (unsigned) sizeof (*chain), (unsigned) length,
                (unsigned) chain->img_chunk_offset, (unsigned) count);
@@ -164,16 +191,27 @@ vt_probe_handoff (grub_file_t file, const char *path,
                    (unsigned long long) (grub_addr_t) chain);
     grub_snprintf (size, sizeof (size), "%llu",
                    (unsigned long long) length);
+    char env_addr[40];
+    grub_snprintf (env_addr, sizeof (env_addr), "0x%llx",
+                   (unsigned long long) (grub_addr_t) env_param);
     grub_env_set ("vt_probe_chain_addr", addr);
     grub_env_set ("vt_probe_chain_size", size);
     grub_env_set ("vt_probe_gpt_guid", gpt_guid);
+    grub_env_set ("vt_probe_env_addr", env_addr);
     grub_printf ("VT_GPT_GUID hex=%s\n", gpt_guid);
+    grub_printf ("VT_ENV_PARAM bytes=%u live_get=1 live_set=1\n",
+                 (unsigned) sizeof (*env_param));
+    vt_pending_env = env_param;
     vt_pending_chain = chain;
-    chain = 0; /* owned by module until next mapping / module teardown */
+    env_param = 0;
+    chain = 0; /* module owns both objects through EFI StartImage */
   }
   grub_printf ("VT_HANDOFF_PREPARED efi_invoke=no catalog_unverified=yes\n");
 
 done:
+  if (error)
+    grub_env_unset ("VTOY_CHKDEV_RESULT_STRING");
+  grub_free (env_param);
   grub_free (chain);
   if (disk)
     grub_disk_close (disk);
