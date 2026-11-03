@@ -14,12 +14,9 @@
 -    if (var && size == 1 && *var == 1)
 +    if (grub_efi_get_variable("SecureBoot", &global, &size, &var) ==
 +        GRUB_EFI_SUCCESS && var && size == 1 && *(grub_uint8_t *)var == 1)
-@@ -418,3 +418,4 @@
-     }
-     grub_check_free(var);
- 
+@@ -420,3 +420,4 @@
 +    var = NULL;
-@@ -421,2 +422,2 @@
+     size = 0;
 -    var = grub_efi_get_variable("SetupMode", &global, &size);
 -    if (var && size == 1 && *var == 1)
 +    if (grub_efi_get_variable("SetupMode", &global, &size, &var) ==
