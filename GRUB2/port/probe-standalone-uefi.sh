@@ -19,7 +19,7 @@ esac
 [ -s "$module" ] || { echo 'Nonempty compiled module required' >&2; exit 3; }
 [ ! -e "$output" ] || { echo 'Output directory already exists' >&2; exit 4; }
 
-for binary in grub-mkimage sgdisk mkfs.vfat mkfs.ext4 mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 xorriso; do
+for binary in grub-mkimage sgdisk mkfs.vfat mkfs.ext4 debugfs mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 xorriso; do
   command -v "$binary" >/dev/null 2>&1 || {
     echo "Missing test dependency: $binary" >&2
     exit 5
@@ -114,6 +114,17 @@ PY
 xorriso -as mkisofs -quiet -R -J -V VTOY_MAP_TEST \
   -o "$output/vt-map-image.iso" "$output/iso-content" \
   > "$output/xorriso.log" 2>&1
+
+# ISO9660 bytes 0..32767 are the reserved System Area. Nonzero data
+# here makes the ext4 fixture's initial file blocks non-sparse when
+# populated by mkfs.ext4 -d; the primary volume descriptor is untouched.
+python3 - "$output/vt-map-image.iso" <<'PY'
+import hashlib
+import sys
+with open(sys.argv[1], "r+b") as stream:
+    for index in range(1024):
+        stream.write(hashlib.sha256(index.to_bytes(4, "big")).digest())
+PY
 xorriso -indev "$output/vt-map-image.iso" -pvd_info \
   >> "$output/xorriso.log" 2>&1
 
@@ -141,6 +152,8 @@ else
   cp "$output/vt-probe-image.iso" "$output/ext4-content/vt-probe-image.iso"
   mkfs.ext4 -F -b 4096 -d "$output/ext4-content" "$output/iso-part.img" \
     > "$output/iso-ext4.log" 2>&1
+  debugfs -R 'stat /vt-map-image.iso' "$output/iso-part.img" \
+    > "$output/iso-ext4-extents.log" 2>&1
 fi
 
 for target in boot iso; do
