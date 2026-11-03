@@ -70,7 +70,14 @@ jobs:
             exit 6
           }
           export WORKSPACE="$EDK2_PATH"
-          source edksetup.sh --reconfig > "$work/edksetup.log" 2>&1
+          # edksetup.sh from 2019 dereferences optional variables without
+          # checking whether they exist, so do not source it under nounset.
+          set +u
+          if ! source edksetup.sh --reconfig > "$work/edksetup.log" 2>&1; then
+            tail -n 80 "$work/edksetup.log" >&2
+            exit 8
+          fi
+          set -u
           build -p MdeModulePkg/MdeModulePkg.dsc \
             -m MdeModulePkg/Application/Ventoy/Ventoy.inf \
             -a X64 -b RELEASE -t GCC5 > "$work/ventoy-build.log" 2>&1 || {
