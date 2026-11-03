@@ -1,0 +1,66 @@
+name: Compile-probe Ventoy module on Ubuntu GRUB
+
+on:
+  push:
+    branches:
+      - m-boot-secondary-uefi
+    paths:
+      - .github/workflows/probe-ventoy-module.yml
+      - GRUB2/probe-runner-ventoy-module.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  module-compile-probe:
+    name: Locate actual custom-module GRUB API incompatibilities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out experimental fork
+        uses: actions/checkout@v4
+
+      - name: Retrieve actual Ubuntu distribution source and build dependencies
+        run: |
+          set -eu
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            grub-common grub-efi-amd64-bin dpkg-dev build-essential automake \
+            autoconf gettext bison flex python3 patch
+          sudo DEBIAN_FRONTEND=noninteractive apt-get build-dep -y grub2
+
+          version=$(dpkg-query -W -f='${Version}' grub-common)
+          src=$(dpkg-query -W -f='${source:Package}' grub-common)
+          printf 'source=%s\nversion=%s\n' "$src" "$version" \
+            | tee "$RUNNER_TEMP/grub-module-source-info.txt"
+
+          mkdir -p "$RUNNER_TEMP/grub-module-input"
+          cd "$RUNNER_TEMP/grub-module-input"
+          apt-get source "$src=$version"
+          distro=$(find "$PWD" -mindepth 1 -maxdepth 1 -type d \
+            -name 'grub2-*' -print -quit)
+          test -s "$distro/configure.ac"
+          printf '%s\n' "$distro" > "$RUNNER_TEMP/grub-module-distro-path.txt"
+
+      - name: Build custom Ventoy module against unmodified runner GRUB core
+        run: |
+          set -eu
+          distro=$(cat "$RUNNER_TEMP/grub-module-distro-path.txt")
+          sh GRUB2/probe-runner-ventoy-module.sh \
+            "$distro" "$RUNNER_TEMP/ventoy-module-probe"
+
+      - name: Upload source-level compile evidence (success or failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ventoy-custom-module-compile-probe
+          path: |
+            ${{ runner.temp }}/grub-module-source-info.txt
+            ${{ runner.temp }}/ventoy-module-probe/summary.txt
+            ${{ runner.temp }}/ventoy-module-probe/autogen.log
+            ${{ runner.temp }}/ventoy-module-probe/configure.log
+            ${{ runner.temp }}/ventoy-module-probe/build.log
+          if-no-files-found: warn
+          retention-days: 30
