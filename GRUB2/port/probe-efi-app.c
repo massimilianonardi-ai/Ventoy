@@ -130,7 +130,9 @@ parse_gpt_guid (EFI_LOADED_IMAGE *image, UINT8 guid[16])
   return EFI_INVALID_PARAMETER;
 }
 
-EFI_STATUS EFIAPI
+/* GNU-EFI crt0 calls efi_main using SysV C ABI, unlike firmware
+ * protocol methods. Do not mark this entrypoint EFIAPI. */
+EFI_STATUS
 efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
 {
   EFI_GUID loaded_guid = LOADED_IMAGE_PROTOCOL;
