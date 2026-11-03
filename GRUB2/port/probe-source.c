@@ -19,6 +19,7 @@ GRUB_MOD_LICENSE ("GPLv3+");
 
 extern void vt_register_extent_probe (void);
 extern void vt_unregister_extent_probe (void);
+extern void vt_release_handoff_probe (void);
 
 static grub_command_t source_probe_command;
 
@@ -66,5 +67,6 @@ GRUB_MOD_INIT (ventoy_source_probe)
 GRUB_MOD_FINI (ventoy_source_probe)
 {
   vt_unregister_extent_probe ();
+  vt_release_handoff_probe ();
   grub_unregister_command (source_probe_command);
 }
