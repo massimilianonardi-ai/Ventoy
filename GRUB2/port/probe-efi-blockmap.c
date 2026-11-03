@@ -33,8 +33,17 @@ disk_read (EFI_BLOCK_IO_PROTOCOL *disk, UINT64 lba, UINTN length, VOID *buf)
                             (EFI_LBA)lba, length, buf);
 }
 
-static UINT32
-crc_update (UINT32 crc, const UINT8 *data, UINTN bytes)
+extern EFI_STATUS vt_probe_virtual_media (EFI_SYSTEM_TABLE *system,
+                                           EFI_BLOCK_IO_PROTOCOL *backing,
+                                           const UINT8 *chain,
+                                           UINT64 chain_size,
+                                           UINT32 source_crc,
+                                           EFI_SERIAL_IO_PROTOCOL *serial);
+
+UINT32 vt_probe_crc32_update (UINT32 crc, const UINT8 *data, UINTN bytes);
+
+UINT32
+vt_probe_crc32_update (UINT32 crc, const UINT8 *data, UINTN bytes)
 {
   static UINT32 table[256];
   static BOOLEAN initialized = FALSE;
@@ -215,15 +224,21 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
           if (chunk_index == 0 && sector == begin)
             note (serial, "VT_EFI_FIRST_READ_OK\r\n",
                   sizeof ("VT_EFI_FIRST_READ_OK\r\n") - 1);
-          crc = crc_update (crc, buffer, read_bytes);
+          crc = vt_probe_crc32_update (crc, buffer, read_bytes);
           sector += sectors;
         }
       logical = end + 1;
     }
 
-  status = logical == image_size / 2048
-           ? print_crc (serial, crc ^ 0xffffffffU)
-           : EFI_COMPROMISED_DATA;
+  if (logical != image_size / 2048)
+    status = EFI_COMPROMISED_DATA;
+  else
+    {
+      status = vt_probe_virtual_media (system, source, chain, length,
+                                       crc ^ 0xffffffffU, serial);
+      if (!EFI_ERROR (status))
+        status = print_crc (serial, crc ^ 0xffffffffU);
+    }
 
 done:
   if (allocation)
