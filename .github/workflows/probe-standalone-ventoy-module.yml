@@ -7,6 +7,7 @@ on:
       - .github/workflows/probe-standalone-ventoy-module.yml
       - GRUB2/port/probe-source.c
       - GRUB2/port/probe-extents.c
+      - GRUB2/port/probe-handoff.c
       - GRUB2/port/verify-extent-map.py
       - GRUB2/port/probe-standalone-module.sh
       - GRUB2/port/probe-standalone-uefi.sh
