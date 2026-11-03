@@ -148,6 +148,13 @@ jobs:
             "$(cat "$RUNNER_TEMP/original-efi-grub-source-path")" \
             "$RUNNER_TEMP/original-efi-grub-module"
 
+      - name: Compile a genuine EFI application for the disposable El Torito ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh GRUB2/port/build-iso-boot-probe.sh \
+            "$RUNNER_TEMP/ventoy-original-edk2/iso-efi-payload"
+
       - name: Boot real original Ventoy EDK2 image under disposable OVMF
         shell: bash
         run: |
@@ -172,13 +179,19 @@ jobs:
           sh GRUB2/port/probe-standalone-uefi.sh \
             "$module" "$RUNNER_TEMP/ventoy-original-edk2/original-media-gpt3" \
             ext4-gpt3 "$binary" original-media
+          VTOY_ISO_BOOT_EFI="$RUNNER_TEMP/ventoy-original-edk2/iso-efi-payload/BOOTX64.EFI" \
+          VTOY_ISO_DRIVER_EFI="$GITHUB_WORKSPACE/INSTALL/ventoy/iso9660_x64.efi" \
+            sh GRUB2/port/probe-standalone-uefi.sh \
+              "$module" "$RUNNER_TEMP/ventoy-original-edk2/original-iso-boot" \
+              fat32 "$binary" original-boot
           {
             echo 'original_ventoy_edk2_runtime=passed'
             echo 'original_efi_source_scenarios=fat32-gpt1,ext4-gpt3'
             echo 'original_gpt_disk_guid_collision=resolved'
             echo 'original_wrong_gpt_guid=rejected'
             echo 'original_virtual_blockio=full_crc32_verified_and_uninstalled'
-            echo 'original_efi_iso_bootloader=not-tested'
+            echo 'original_efi_iso_bootloader=StartImage_probe'
+            echo 'installer_boot=not-tested'
           } | tee "$RUNNER_TEMP/ventoy-original-edk2/runtime-result.txt"
 
       - name: Upload build diagnostics only (not an integration release)
@@ -215,5 +228,13 @@ jobs:
             ${{ runner.temp }}/ventoy-original-edk2/original-media-gpt3/runtime-result.txt
             ${{ runner.temp }}/ventoy-original-edk2/original-media-gpt3/qemu.log
             ${{ runner.temp }}/ventoy-original-edk2/original-media-gpt3/iso-map-verification.txt
+            ${{ runner.temp }}/ventoy-original-edk2/iso-efi-payload/efi-file.txt
+            ${{ runner.temp }}/ventoy-original-edk2/iso-efi-payload/build.log
+            ${{ runner.temp }}/ventoy-original-edk2/iso-efi-payload/efi-sha256.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-iso-boot/runtime-result.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-iso-boot/qemu.log
+            ${{ runner.temp }}/ventoy-original-edk2/original-iso-boot/xorriso.log
+            ${{ runner.temp }}/ventoy-original-edk2/original-iso-boot/boot-catalog-verification.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-iso-boot/iso-map-verification.txt
           retention-days: 14
           if-no-files-found: warn
