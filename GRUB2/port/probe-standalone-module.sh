@@ -39,7 +39,7 @@ if ! (
     --prefix="$output/stage" > "$output/configure.log" 2>&1 &&
   make -C grub-core -j 4 ventoy_source_probe.module genmod.sh build-grub-module-verifier > "$output/build.log" 2>&1 &&
   cp /usr/lib/grub/x86_64-efi/moddep.lst "$output/module-dependencies.lst" &&
-  printf 'ventoy_source_probe:\\n' >> "$output/module-dependencies.lst" &&
+  echo 'ventoy_source_probe:' >> "$output/module-dependencies.lst" &&
   (
     cd grub-core
     sh ./genmod.sh "$output/module-dependencies.lst" \
