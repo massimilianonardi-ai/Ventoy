@@ -39,9 +39,13 @@ struct vt_map_context
 
 static grub_command_t vt_map_command;
 
-static void
+void vt_register_extent_probe (void);
+void vt_unregister_extent_probe (void);
+
+static grub_err_t
 vt_map_hook (grub_disk_addr_t sector, unsigned offset,
-             unsigned length, void *data)
+             unsigned length, char *buf __attribute__ ((unused)),
+             void *data)
 {
   struct vt_map_context *ctx = (struct vt_map_context *) data;
   struct vt_map_extent *last;
@@ -50,7 +54,7 @@ vt_map_hook (grub_disk_addr_t sector, unsigned offset,
   grub_uint64_t span;
 
   if (ctx->bad || !length)
-    return;
+    return GRUB_ERR_NONE;
 
   if (offset >= VT_MAP_SECTOR_SIZE
       || sector > (~(grub_uint64_t) 0 >> VT_MAP_SECTOR_BITS)
@@ -58,7 +62,7 @@ vt_map_hook (grub_disk_addr_t sector, unsigned offset,
         (~(grub_uint64_t) 0 >> VT_MAP_SECTOR_BITS) - sector)
     {
       ctx->bad = 1;
-      return;
+      return GRUB_ERR_NONE;
     }
 
   physical = ((ctx->partition_sector + sector) << VT_MAP_SECTOR_BITS)
@@ -70,7 +74,7 @@ vt_map_hook (grub_disk_addr_t sector, unsigned offset,
       || physical > ~(grub_uint64_t) 0 - span)
     {
       ctx->bad = 1;
-      return;
+      return GRUB_ERR_NONE;
     }
 
   if (ctx->count)
@@ -81,7 +85,7 @@ vt_map_hook (grub_disk_addr_t sector, unsigned offset,
         {
           last->length += span;
           ctx->mapped += span;
-          return;
+          return GRUB_ERR_NONE;
         }
     }
 
@@ -95,7 +99,7 @@ vt_map_hook (grub_disk_addr_t sector, unsigned offset,
       if (ctx->count == capacity)
         {
           ctx->bad = 2;
-          return;
+          return GRUB_ERR_NONE;
         }
 
       extended = grub_realloc (ctx->extents,
@@ -103,7 +107,7 @@ vt_map_hook (grub_disk_addr_t sector, unsigned offset,
       if (!extended)
         {
           ctx->bad = 3;
-          return;
+          return GRUB_ERR_NONE;
         }
       ctx->extents = extended;
       ctx->capacity = capacity;
@@ -114,6 +118,7 @@ vt_map_hook (grub_disk_addr_t sector, unsigned offset,
   last->physical = physical;
   last->length = span;
   ctx->mapped += span;
+  return GRUB_ERR_NONE;
 }
 
 /* Read a real ISO9660 PVD without including these metadata lookups in
