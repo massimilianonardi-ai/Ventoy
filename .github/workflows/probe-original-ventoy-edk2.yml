@@ -1,0 +1,107 @@
+name: Build original Ventoy EDK2 EFI application (experimental)
+
+on:
+  push:
+    branches: [m-boot-secondary-uefi]
+    paths:
+      - .github/workflows/probe-original-ventoy-edk2.yml
+      - EDK2/edk2_mod/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  original-efi-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out experimental Ventoy fork
+        uses: actions/checkout@v4
+
+      - name: Install EDK2 native build requirements
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential gcc g++ make uuid-dev python3 nasm acpica-tools \
+            curl unzip file
+
+      - name: Retrieve pinned original EDK2 source and apply the Ventoy overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          original=bd85bf54c268204c7a698a96f3ccd96cd77952cd
+          work="$RUNNER_TEMP/ventoy-original-edk2"
+          mkdir -p "$work/input"
+          curl --fail --location --retry 3 \
+            "https://codeload.github.com/tianocore/edk2/zip/$original" \
+            -o "$work/input/edk2.zip"
+          ( cd "$work/input" && sha256sum edk2.zip > "$work/source-zip.sha256" )
+          unzip -q "$work/input/edk2.zip" -d "$work/input"
+          src="$work/input/edk2-$original"
+          test -s "$src/edksetup.sh"
+          test -s "$src/MdeModulePkg/MdeModulePkg.dsc"
+          test -s EDK2/edk2_mod/edk2-edk2-stable201911/MdeModulePkg/Application/Ventoy/Ventoy.c
+          cp -a EDK2/edk2_mod/edk2-edk2-stable201911/. "$src/"
+          test -s "$src/MdeModulePkg/Application/Ventoy/Ventoy.inf"
+          {
+            printf 'EDK2_SOURCE_COMMIT=%s\n' "$original"
+            printf 'VENTOY_FORK_COMMIT=%s\n' "$GITHUB_SHA"
+            printf 'RUNNER_IMAGE=%s\n' "$ImageOS"
+            printf 'RUNNER_IMAGE_VERSION=%s\n' "$ImageVersion"
+          } | tee "$work/provenance.txt"
+          echo "EDK2_PATH=$src" >> "$GITHUB_ENV"
+
+      - name: Build the original VentoyEfiMain application only
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ventoy-original-edk2"
+          cd "$EDK2_PATH"
+          make -C BaseTools -j 4 > "$work/basetools.log" 2>&1 || {
+            tail -n 90 "$work/basetools.log" >&2
+            exit 6
+          }
+          export WORKSPACE="$EDK2_PATH"
+          source edksetup.sh --reconfig > "$work/edksetup.log" 2>&1
+          build -p MdeModulePkg/MdeModulePkg.dsc \
+            -m MdeModulePkg/Application/Ventoy/Ventoy.inf \
+            -a X64 -b RELEASE -t GCC5 > "$work/ventoy-build.log" 2>&1 || {
+              tail -n 120 "$work/ventoy-build.log" >&2
+              exit 7
+            }
+          actual=$(find "$EDK2_PATH/Build/MdeModule" -type f \
+            -path '*/Application/Ventoy/Ventoy/OUTPUT/Ventoy.efi' -print)
+          test "$(printf '%s\n' "$actual" | sed '/^$/d' | wc -l)" -eq 1
+          test -s "$actual"
+          file "$actual" | tee "$work/efi-file.txt"
+          file "$actual" | grep -q 'PE32+.*EFI application'
+          sha256sum "$actual" | tee "$work/efi-sha256.txt"
+          cp "$actual" "$work/Ventoy-original-X64.EFI"
+          {
+            echo 'original_ventoy_edk2_build=passed'
+            echo 'original_efi_entry=VentoyEfiMain'
+            echo 'runtime_env_param_tested=no'
+            echo 'virtual_iso_boot_tested=no'
+            echo 'grub_core_patched=no'
+            echo 'physical_device_writes=no'
+          } | tee "$work/result.txt"
+
+      - name: Upload build diagnostics only (not an integration release)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: original-ventoy-edk2-build-evidence
+          path: |
+            ${{ runner.temp }}/ventoy-original-edk2/provenance.txt
+            ${{ runner.temp }}/ventoy-original-edk2/source-zip.sha256
+            ${{ runner.temp }}/ventoy-original-edk2/basetools.log
+            ${{ runner.temp }}/ventoy-original-edk2/edksetup.log
+            ${{ runner.temp }}/ventoy-original-edk2/ventoy-build.log
+            ${{ runner.temp }}/ventoy-original-edk2/efi-file.txt
+            ${{ runner.temp }}/ventoy-original-edk2/efi-sha256.txt
+            ${{ runner.temp }}/ventoy-original-edk2/result.txt
+            ${{ runner.temp }}/ventoy-original-edk2/Ventoy-original-X64.EFI
+          retention-days: 14
+          if-no-files-found: warn

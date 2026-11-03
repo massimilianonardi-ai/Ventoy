@@ -338,3 +338,15 @@ Original env_param ABI handoff diagnostic (experimental):
   exercising unmodified VentoyEfiMain/VentoyProtocol.c with this ABI,
   implementing secondary real-disk validation in that app, and then
   boot-catalog/installer handoff remain explicit next steps.
+
+Original EDK2 build experiment:
+- .github/workflows/probe-original-ventoy-edk2.yml retrieves pinned
+  tianocore/edk2 commit bd85bf54c268204c7a698a96f3ccd96cd77952cd
+  (the upstream edk2-stable201911 tag), applies this Ventoy fork's ORIGINAL
+  EDK2 application overlay and builds Ventoy.inf using the real EDK2 BaseTools.
+- A passing build proves only that original VentoyEfiMain can be compiled
+  as an X64 EFI application. It does NOT prove env_param callback execution,
+  original source-disk selection or any ISO/installer boot. It must not be
+  deployed to m-boot or the operator USB based on successful compilation.
+- The separate GNU-EFI diagnostic still tests runtime ABI handoff until
+  the authentic EDK2 app is safely executable in disposable OVMF.
