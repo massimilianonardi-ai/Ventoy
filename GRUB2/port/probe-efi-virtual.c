@@ -19,6 +19,7 @@ typedef struct
   EFI_BLOCK_IO_PROTOCOL block;
   EFI_BLOCK_IO_MEDIA media;
   EFI_BLOCK_IO_PROTOCOL *backing;
+  EFI_SERIAL_IO_PROTOCOL *serial;
   const UINT8 *chain;
   UINT64 count;
   UINT8 *scratch_allocation;
@@ -93,7 +94,13 @@ vt_media_read (EFI_BLOCK_IO_PROTOCOL *block, UINT32 media_id,
   if (!block || !block->Media || !ctx->backing || !ctx->scratch)
     return EFI_INVALID_PARAMETER;
   if (media_id != ctx->media.MediaId)
-    return EFI_MEDIA_CHANGED;
+    {
+      vt_stage (ctx->serial, "VT_EFI_MEDIAID_EXPECTED_THEN_ACTUAL\r\n",
+                sizeof ("VT_EFI_MEDIAID_EXPECTED_THEN_ACTUAL\r\n") - 1);
+      vt_status (ctx->serial, ctx->media.MediaId);
+      vt_status (ctx->serial, media_id);
+      return EFI_MEDIA_CHANGED;
+    }
   if (bytes == 0)
     return EFI_SUCCESS;
   if (!buffer || (bytes % VT_ISO_BLOCK) != 0)
@@ -208,6 +215,7 @@ vt_probe_virtual_media (EFI_SYSTEM_TABLE *system,
 
   SetMem (&media, sizeof (media), 0);
   media.backing = backing;
+  media.serial = serial;
   media.chain = chain;
   media.count = vt_load_le (chain + 2596, 4);
   CopyMem (media.path, original_vendor_path, sizeof (media.path));
