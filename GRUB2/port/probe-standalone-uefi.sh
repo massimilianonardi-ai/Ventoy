@@ -98,7 +98,7 @@ grub-mkimage --format=x86_64-efi \
   --directory=/usr/lib/grub/x86_64-efi \
   --prefix=/grub --config="$output/bootstrap.cfg" \
   --output="$output/BOOTX64.EFI" \
-  part_gpt fat ext2 chainloader search search_fs_file serial terminal normal configfile test echo halt ls
+  part_gpt fat ext2 chain search search_fs_file serial terminal normal configfile test echo halt ls
 
 # Each target is an isolated NEW GPT image, not a host or loop device.
 for target in boot iso; do
