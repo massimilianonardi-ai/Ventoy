@@ -4,6 +4,13 @@
 #include <efi.h>
 #include <efilib.h>
 
+static VOID
+note (EFI_SERIAL_IO_PROTOCOL *serial, const CHAR8 *message, UINTN length)
+{
+  if (serial)
+    uefi_call_wrapper (serial->Write, 3, serial, &length, (VOID *)message);
+}
+
 static UINT64
 word (const UINT8 *p, UINTN n)
 {
@@ -102,6 +109,8 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
                               &handles);
   if (EFI_ERROR (status))
     return status;
+  note (serial, "VT_EFI_ENUM_OK\r\n",
+        sizeof ("VT_EFI_ENUM_OK\r\n") - 1);
   allocation = AllocatePool (65536 + 4096);
   if (!allocation)
     {
@@ -140,6 +149,9 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
       goto done;
     }
 
+  note (serial, "VT_EFI_DISK_SELECTED\r\n",
+        sizeof ("VT_EFI_DISK_SELECTED\r\n") - 1);
+
   for (chunk_index = 0; chunk_index < count; ++chunk_index)
     {
       const UINT8 *chunk = chain + 2616 + chunk_index * 24;
@@ -174,6 +186,9 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
                   goto done;
                 }
             }
+          if (chunk_index == 0 && sector == begin)
+            note (serial, "VT_EFI_FIRST_READ_OK\r\n",
+                  sizeof ("VT_EFI_FIRST_READ_OK\r\n") - 1);
           crc = crc_update (crc, buffer, read_bytes);
           sector += sectors;
         }
