@@ -45,6 +45,20 @@ jobs:
           test -s EDK2/edk2_mod/edk2-edk2-stable201911/MdeModulePkg/Application/Ventoy/Ventoy.c
           cp -a EDK2/edk2_mod/edk2-edk2-stable201911/. "$src/"
           test -s "$src/MdeModulePkg/Application/Ventoy/Ventoy.inf"
+          # Fix one removed Python 3.12 array method in the DISPOSABLE
+          # 2019 EDK2 BaseTools map verifier. Do not patch Ventoy sources.
+          python3 - "$src/BaseTools/Source/Python/Common/Misc.py" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+old = "ByteArray.tostring() != b'PE\\0\\0'"
+new = "ByteArray.tobytes() != b'PE\\0\\0'"
+if source.count(old) != 1:
+    raise SystemExit("Unexpected EDK2 source; abort Python compatibility fix")
+path.write_text(source.replace(old, new))
+PY
           {
             printf 'EDK2_SOURCE_COMMIT=%s\n' "$original"
             printf 'VENTOY_FORK_COMMIT=%s\n' "$GITHUB_SHA"
