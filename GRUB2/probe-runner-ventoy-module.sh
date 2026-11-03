@@ -34,6 +34,20 @@ patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
     exit 7
 }
 
+# Ventoy's former GRUB core owns these policy variables. Restore their
+# definitions in the runner-source core; do not invent module-local stubs.
+if grep -q 'g_sys_sb' "$output/source/grub-core/kern/env.c"
+then
+    echo "Distribution GRUB already defines Ventoy Secure Boot state" >&2
+    exit 8
+fi
+cat >> "$output/source/grub-core/kern/env.c" <<'EOF'
+
+/* Ventoy Secure Boot state, ported from the upstream GRUB core overlay. */
+grub_uint8_t g_sys_sb = 0;
+grub_uint8_t g_sb_policy = VTOY_SB_POLICY_BYPASS;
+EOF
+
 # Add only the Ventoy module definition, not 2.04's Makefile/core rewrites.
 cat >> "$output/source/grub-core/Makefile.core.def" <<'EOF'
 
