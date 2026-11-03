@@ -11,6 +11,10 @@
 #include <grub/err.h>
 #include <grub/ventoy.h>
 
+grub_err_t vt_probe_handoff (grub_file_t file, const char *path,
+                            const ventoy_img_chunk *chunks,
+                            grub_uint32_t count);
+
 grub_err_t
 vt_probe_handoff (grub_file_t file, const char *path,
                   const ventoy_img_chunk *chunks, grub_uint32_t count)
