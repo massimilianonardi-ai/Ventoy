@@ -56,6 +56,12 @@ vtoy_block_data gBlockData;
 static grub_env_get_pf grub_env_get = NULL;
 static grub_env_set_pf grub_env_set = NULL;
 
+/* Opt-in secondary source probe. Never changes upstream/default Ventoy mode.
+ * A successful probe does not install CD BlockIo or boot an ISO. */
+STATIC BOOLEAN gMbootSourceProbe = FALSE;
+STATIC UINT8 gMbootSourceGuid[16];
+STATIC UINTN gMbootChainBytes = 0;
+
 ventoy_grub_param_file_replace *g_file_replace_list = NULL;
 ventoy_efi_file_replace g_efi_file_replace;
 
@@ -533,6 +539,239 @@ STATIC EFI_STATUS EFIAPI ventoy_load_image
 }
 
 
+/* The original application's optional secondary source selector.
+ * The native Ventoy os_param still carries the MBR bytes it always
+ * carried; GPT identity is a DISTINCT LoadOptions field. Never select
+ * a disk by legacy MBR identity alone in this secondary probe.
+ */
+STATIC EFI_STATUS ventoy_parse_secondary_guid(IN CONST CHAR16 *Options)
+{
+    STATIC CONST CHAR16 Name[] = L"gptguid:";
+    STATIC CONST CHAR8 Alphabet[] = "0123456789abcdef";
+    CONST CHAR16 *Start = StrStr(Options, Name);
+    UINTN i, j;
+    if (!Start || (Start != Options && Start[-1] != L' '))
+    {
+        return EFI_INVALID_PARAMETER;
+    }
+    Start += StrLen(Name);
+    for (i = 0; i < 16; i++)
+    {
+        UINTN Parts[2];
+        UINTN k;
+        for (k = 0; k < 2; k++)
+        {
+            Parts[k] = 16;
+            for (j = 0; j < 16; j++)
+            {
+                if (Start[i * 2 + k] == (CHAR16)Alphabet[j] ||
+                    Start[i * 2 + k] == (CHAR16)(j < 6 ? L'A' + j - 10 : 0))
+                {
+                    Parts[k] = j;
+                    break;
+                }
+            }
+            if (Parts[k] >= 16)
+            {
+                return EFI_INVALID_PARAMETER;
+            }
+        }
+        gMbootSourceGuid[i] = (UINT8)((Parts[0] << 4) | Parts[1]);
+    }
+    if (Start[32] != L' ' && Start[32] != 0)
+    {
+        return EFI_INVALID_PARAMETER;
+    }
+    return EFI_SUCCESS;
+}
+
+/* Read-only, real EFI BlockIo matching for an image on ANY supported
+ * source GPT partition, without Ventoy disk branding or partition order.
+ * Checks full native chunk coverage, original MBR identity, true disk GPT
+ * GUID, primary GPT header CRC, geometry and mapped ISO9660 PVD.
+ */
+STATIC EFI_STATUS ventoy_find_secondary_source(VOID)
+{
+    EFI_STATUS Status = EFI_NOT_FOUND;
+    EFI_STATUS ReadStatus;
+    EFI_HANDLE *Handles = NULL;
+    EFI_BLOCK_IO_PROTOCOL *Io = NULL;
+    EFI_BLOCK_IO_PROTOCOL *Selected = NULL;
+    EFI_HANDLE SelectedHandle = NULL;
+    UINTN Count = 0, i;
+    UINTN Matches = 0;
+    UINT8 *Allocation = NULL;
+    UINT8 *Sector;
+    UINT64 Logical = 0, PvdLba = 0;
+    UINT64 ImageSectors;
+    UINT32 OriginalChecksum = 0;
+    UINT8 Sum = 0;
+    ventoy_guid Guid = VENTOY_GUID;
+
+    if (!g_chain || !g_chunk || !g_img_chunk_num ||
+        g_img_chunk_num > 16384 ||
+        gMbootChainBytes != sizeof(ventoy_chain_head) +
+                           g_img_chunk_num * sizeof(ventoy_img_chunk) ||
+        g_chain->img_chunk_offset != sizeof(ventoy_chain_head) ||
+        g_chain->disk_sector_size != 512 ||
+        g_chain->override_chunk_num != 0 || g_chain->virt_chunk_num != 0 ||
+        g_chain->os_param.vtoy_disk_size == 0 ||
+        (g_chain->os_param.vtoy_disk_size % 512) ||
+        g_chain->os_param.vtoy_img_size == 0 ||
+        (g_chain->os_param.vtoy_img_size % 2048) ||
+        g_chain->real_img_size_in_bytes != g_chain->os_param.vtoy_img_size ||
+        g_chain->virt_img_size_in_bytes != g_chain->real_img_size_in_bytes ||
+        CompareMem(&g_chain->os_param.guid, &Guid, sizeof(Guid)))
+    {
+        return EFI_COMPROMISED_DATA;
+    }
+
+    for (i = 0; i < sizeof(ventoy_os_param); i++)
+    {
+        Sum = (UINT8)(Sum + ((UINT8 *)&g_chain->os_param)[i]);
+    }
+    if (Sum != 0)
+    {
+        return EFI_COMPROMISED_DATA;
+    }
+
+    ImageSectors = g_chain->real_img_size_in_bytes / 2048;
+    if (ImageSectors <= 16 || ImageSectors > 0xffffffffULL)
+    {
+        return EFI_COMPROMISED_DATA;
+    }
+    for (i = 0; i < g_img_chunk_num; i++)
+    {
+        ventoy_img_chunk *Chunk = &g_chunk[i];
+        UINT64 Span;
+        if (Chunk->img_start_sector != Logical ||
+            Chunk->img_end_sector < Chunk->img_start_sector ||
+            Chunk->disk_end_sector < Chunk->disk_start_sector)
+        {
+            return EFI_COMPROMISED_DATA;
+        }
+        Span = (UINT64)Chunk->img_end_sector - Chunk->img_start_sector + 1;
+        if (Chunk->disk_end_sector - Chunk->disk_start_sector + 1 != Span * 4 ||
+            (Logical + Span) > ImageSectors)
+        {
+            return EFI_COMPROMISED_DATA;
+        }
+        if (Logical <= 16 && 16 < Logical + Span)
+        {
+            PvdLba = Chunk->disk_start_sector + (16 - Logical) * 4;
+        }
+        Logical += Span;
+    }
+    if (Logical != ImageSectors || !PvdLba)
+    {
+        return EFI_COMPROMISED_DATA;
+    }
+
+    Allocation = AllocatePool(2048 + 4096);
+    if (!Allocation)
+    {
+        return EFI_OUT_OF_RESOURCES;
+    }
+    Sector = (UINT8 *)(((UINTN)Allocation + 4095) & ~(UINTN)4095);
+    Status = gBS->LocateHandleBuffer(ByProtocol, &gEfiBlockIoProtocolGuid,
+                                     NULL, &Count, &Handles);
+    if (EFI_ERROR(Status))
+    {
+        goto done;
+    }
+    for (i = 0; i < Count; i++)
+    {
+        UINT64 Bytes;
+        UINT32 HeaderSize, ExpectedCrc, ActualCrc;
+        UINTN j;
+
+        ReadStatus = gBS->HandleProtocol(Handles[i], &gEfiBlockIoProtocolGuid,
+                                         (VOID **)&Io);
+        if (EFI_ERROR(ReadStatus) || !Io || !Io->Media ||
+            !Io->Media->MediaPresent || Io->Media->LogicalPartition ||
+            Io->Media->BlockSize != 512 || Io->Media->IoAlign > 4096 ||
+            Io->Media->LastBlock >= (~(UINT64)0 / 512))
+        {
+            continue;
+        }
+        Bytes = (Io->Media->LastBlock + 1) * 512;
+        if (Bytes != g_chain->os_param.vtoy_disk_size ||
+            PvdLba > Io->Media->LastBlock ||
+            Io->Media->LastBlock - PvdLba < 3)
+        {
+            continue;
+        }
+        for (j = 0; j < g_img_chunk_num; j++)
+        {
+            if (g_chunk[j].disk_end_sector > Io->Media->LastBlock)
+            {
+                break;
+            }
+        }
+        if (j != g_img_chunk_num)
+        {
+            continue;
+        }
+
+        ReadStatus = Io->ReadBlocks(Io, Io->Media->MediaId, 0, 512, Sector);
+        if (EFI_ERROR(ReadStatus) ||
+            Sector[510] != 0x55 || Sector[511] != 0xaa ||
+            CompareMem(Sector + 0x180, g_chain->os_param.vtoy_disk_guid, 16) ||
+            CompareMem(Sector + 0x1b8, g_chain->os_param.vtoy_disk_signature, 4))
+        {
+            continue;
+        }
+        ReadStatus = Io->ReadBlocks(Io, Io->Media->MediaId, 1, 512, Sector);
+        if (EFI_ERROR(ReadStatus) ||
+            CompareMem(Sector, "EFI PART", 8))
+        {
+            continue;
+        }
+        HeaderSize = *(UINT32 *)(VOID *)(Sector + 12);
+        ExpectedCrc = *(UINT32 *)(VOID *)(Sector + 16);
+        if (HeaderSize < 92 || HeaderSize > 512 ||
+            *(UINT64 *)(VOID *)(Sector + 24) != 1 ||
+            *(UINT64 *)(VOID *)(Sector + 32) != Io->Media->LastBlock ||
+            CompareMem(Sector + 56, gMbootSourceGuid, 16))
+        {
+            continue;
+        }
+        SetMem(Sector + 16, 4, 0);
+        ReadStatus = gBS->CalculateCrc32(Sector, HeaderSize, &ActualCrc);
+        if (EFI_ERROR(ReadStatus) || ActualCrc != ExpectedCrc)
+        {
+            continue;
+        }
+        ReadStatus = Io->ReadBlocks(Io, Io->Media->MediaId,
+                                    PvdLba, 2048, Sector);
+        if (EFI_ERROR(ReadStatus) || Sector[0] != 1 ||
+            CompareMem(Sector + 1, "CD001", 5))
+        {
+            continue;
+        }
+        Selected = Io;
+        SelectedHandle = Handles[i];
+        Matches++;
+    }
+    if (Matches != 1)
+    {
+        Status = Matches ? EFI_SECURITY_VIOLATION : EFI_NOT_FOUND;
+        goto done;
+    }
+
+    gBlockData.RawBlockIoHandle = SelectedHandle;
+    gBlockData.pRawBlockIo = Selected;
+    Status = gBS->HandleProtocol(SelectedHandle, &gEfiDevicePathProtocolGuid,
+                                 (VOID **)&gBlockData.pDiskDevPath);
+done:
+    if (Handles)
+    {
+        FreePool(Handles);
+    }
+    FreePool(Allocation);
+    return Status;
+}
+
 STATIC EFI_STATUS EFIAPI ventoy_find_iso_disk(IN EFI_HANDLE ImageHandle)
 {
     UINTN i = 0;
@@ -954,11 +1193,41 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
     }
 
 
+    /* Only the explicitly opted-in diagnostic uses secondary GPT identity.
+     * The upstream Ventoy device-check result is still required above. */
+    if (StrStr(pCmdLine, L"mboot_source_probe=1"))
+    {
+        const char *Mode = grub_env_get("VTOY_MBOOT_SECONDARY");
+        if (!Mode || Mode[0] != '1' || Mode[1] != 0)
+        {
+            return EFI_SECURITY_VIOLATION;
+        }
+        Status = ventoy_parse_secondary_guid(pCmdLine);
+        if (EFI_ERROR(Status))
+        {
+            return Status;
+        }
+        gMbootSourceProbe = TRUE;
+    }
+
     pPos = StrStr(pCmdLine, L"mem:");
+    if (gMbootSourceProbe && !pPos)
+    {
+        return EFI_INVALID_PARAMETER;
+    }
     chain = (ventoy_chain_head *)StrHexToUintn(pPos + 4);
 
     pPos = StrStr(pPos, L"size:");
     size = StrDecimalToUintn(pPos + 5);
+    if (gMbootSourceProbe)
+    {
+        if (size < sizeof(ventoy_chain_head) + sizeof(ventoy_img_chunk) ||
+            size > 1024 * 1024)
+        {
+            return EFI_COMPROMISED_DATA;
+        }
+        gMbootChainBytes = size;
+    }
 
     debug("memory addr:%p size:%lu", chain, size);
 
@@ -1020,7 +1289,10 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
             debug("os param checksum: 0x%x %a", g_chain->os_param.chksum, chksum ? "FAILED" : "SUCCESS");
         }
 
-        ventoy_update_image_location(&(g_chain->os_param));
+        if (!gMbootSourceProbe)
+        {
+            ventoy_update_image_location(&(g_chain->os_param));
+        }
 
         if (gDebugPrint)
         {
@@ -1265,6 +1537,25 @@ EFI_STATUS EFIAPI VentoyEfiMain
     Status = ventoy_parse_cmdline(ImageHandle);
     if (EFI_ERROR(Status))
     {
+        return Status;
+    }
+
+    if (gMbootSourceProbe)
+    {
+        /* Execute the AUTHENTIC original VentoyEfiMain and native command
+         * line parser, but stop before variable writes, CD publishing or
+         * any boot attempt. The return status travels through EFI StartImage.
+         */
+        Status = ventoy_find_secondary_source();
+        grub_env_set("vt_original_source_probe",
+                     EFI_ERROR(Status) ? "rejected" : "selected");
+        if (g_chain)
+        {
+            FreePool(g_chain);
+            g_chain = NULL;
+        }
+        FreePool(g_sector_flag);
+        g_sector_flag = NULL;
         return Status;
     }
 
