@@ -4,14 +4,16 @@
 # The actual ISO lives on a SECOND file-backed GPT disk prepared by the host.
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "usage: $0 GRUB-MODULE VENTOY-X64-EFI ISO9660-X64-EFI NEW-OUTPUT-DIR" >&2
+if [[ $# -ne 5 ]]; then
+  echo "usage: $0 GRUB-MODULE VENTOY-X64-EFI ISO9660-X64-EFI NEW-OUTPUT-DIR ISO-GUEST-PATH" >&2
   exit 2
 fi
 module=$1
 ventoy=$2
 driver=$3
 output=$4
+iso_guest_path=$5
+[[ "$iso_guest_path" =~ ^/[A-Za-z0-9._/-]+$ && "$iso_guest_path" != *".."* && "$iso_guest_path" != *"//"* ]] || { echo "invalid guest ISO pathname" >&2; exit 2; }
 for name in "$module" "$ventoy" "$driver"; do
   [[ -s "$name" && -f "$name" && ! -L "$name" ]] || {
     echo "missing regular input: $name" >&2; exit 3;
@@ -39,7 +41,7 @@ cat > "$output/runtime.cfg" <<'GRUB'
 echo VT_USB_RUNTIME_START
 search --file --set=bootpart /vt-usb-boot.marker
 echo VT_USB_BOOT_DEVICE=$bootpart
-search --file --set=isopart /vt-usb.iso
+search --file --set=isopart @VT_SOURCE_ISO_PATH@
 echo VT_USB_ISO_DEVICE=$isopart
 if [ -z "$isopart" ]; then
   echo VT_USB_ISO_MISSING
@@ -47,7 +49,7 @@ else
   set prefix=($bootpart)/grub
   insmod ($bootpart)/grub/x86_64-efi/ventoy_source_probe.mod
   echo VT_USB_MAP_BEGIN
-  vt_extent_probe ($isopart)/vt-usb.iso
+  vt_extent_probe ($isopart)@VT_SOURCE_ISO_PATH@
   echo VT_USB_MAP_DONE
   if [ -n "$vt_probe_chain_addr" ]; then
     set VTOY_MBOOT_SECONDARY=1
@@ -72,6 +74,7 @@ fi
 echo VT_USB_GRUB_FINISHED
 halt
 GRUB
+sed -i "s|@VT_SOURCE_ISO_PATH@|$iso_guest_path|g" "$output/runtime.cfg"
 
 grub-mkimage --format=x86_64-efi \
   --directory=/usr/lib/grub/x86_64-efi \
@@ -113,9 +116,10 @@ gzip -n -9 -c "$output/boot-disk.raw" > "$output/boot-disk.raw.gz"
 {
   echo 'fixture=m-boot-experimental-x86_64-uefi-usb-iso'
   echo 'architecture=x86_64-efi'
-  echo 'source_iso=separate-disposable-GPT-FAT32-disk'
+  printf 'source_iso_guest_path=%s\n' "$iso_guest_path"
+  echo 'source_iso=external-GPT-disk-read-only'
   echo 'native_arm64_efi_tested=no'
-  echo 'physical_usb_writes=no'
+  echo 'physical_usb_writes=not-permitted-by-test'
   echo 'grub_core_patched=no'
   echo 'original_ventoy_source=experimental-branch'
 } > "$output/BUILD-INFO.txt"
