@@ -256,18 +256,26 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
     echo 'physical_device_writes=no'
     echo "qemu_exit=$qemu_status"
   } | tee "$output/runtime-result.txt"
-  python3 "$(dirname "$0")/verify-extent-map.py" \
-    "$output/qemu.log" "$output/vt-map-image.iso" \
-    "$output/iso-disk.img" "$output/iso-map-verification.txt" \
-    "$min_extents" "$part_num"
   if [ -n "$efi_probe" ]; then
+    python3 "$(dirname "$0")/verify-extent-map.py" \
+      "$output/qemu.log" "$output/vt-map-image.iso" \
+      "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+      "$min_extents" "$part_num" efi
     if ! grep -q 'VT_EFI_MEMORY_HANDOFF_OK' "$output/qemu.log" ||
-       grep -q 'VTOY_EFI_MEMORY_BRIDGE_FAILED' "$output/qemu.log"; then
+       ! grep -q 'VT_EFI_BLOCKMAP_OK crc32=' "$output/qemu.log" ||
+       grep -q 'VTOY_EFI_MEMORY_BRIDGE_FAILED' "$output/qemu.log" ||
+       grep -q 'VT_EFI_BLOCKMAP_FAILED' "$output/qemu.log"; then
       echo 'efi_memory_bridge=failed' >&2
       tail -n 75 "$output/qemu.log" >&2
       exit 8
     fi
     echo 'efi_memory_bridge=passed' >> "$output/runtime-result.txt"
+    echo 'efi_blockio_full_iso_crc32=verified' >> "$output/runtime-result.txt"
+  else
+    python3 "$(dirname "$0")/verify-extent-map.py" \
+      "$output/qemu.log" "$output/vt-map-image.iso" \
+      "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+      "$min_extents" "$part_num"
   fi
 else
   echo 'uefi_probe=failed' | tee "$output/runtime-result.txt"
