@@ -57,27 +57,30 @@ Safe test sequence (not yet executed)
    ubuntu-24.04 GitHub runner. It records the actual distribution GRUB
    packages and verifies a stock GRUB EFI baseline; it does NOT compile
    or release Ventoy. The discovered versions are provenance, not pins.
-2. Port Ventoy's GRUB core modifications and custom ventoy module to the
-   GRUB source corresponding to those installed runner packages, then
-   rebuild all affected GRUB components and grub-mkimage from matching
-   sources. Build the secondary GRUB image with
-   VENTOY_GRUB_PREFIX='(,2)/ventoy-secondary/grub'.
-   The original GRUB2/buildgrub.sh and GRUB2/MOD_SRC/grub-2.04/ remain
-   legacy upstream reference, NOT the chosen secondary release route.
-   This port is not implemented or compile-tested yet.
-3. Build the modified EDK2 Ventoy UEFI application too. Unmodified
+2. Use .github/workflows/port-runner-grub.yml to diagnose the complete
+   patch gap against distribution GRUB source. It compares upstream 2.04
+   solely as the historical reference, not as the selected build version.
+   The resulting patch is diagnostic, NOT a release build input.
+3. Use .github/workflows/probe-ventoy-module.yml to compile only the
+   unported Ventoy module against the runner source. It applies
+   GRUB2/port/runner-efi-api.patch to a temporary source copy, restoring
+   the EFI GUID/variable API and Secure Boot state declarations. The
+   experiment still lacks other GRUB core ABI integrations: a failure
+   is an expected evidence boundary, not permission to publish its output.
+4. Finish porting the Ventoy GRUB core and custom module to the actual
+   runner-matched GRUB sources. Rebuild matching GRUB tools and modules
+   with VENTOY_GRUB_PREFIX='(,2)/ventoy-secondary/grub'.
+   Original GRUB2/buildgrub.sh and MOD_SRC/grub-2.04/ remain legacy
+   upstream reference, NOT a secondary release build route.
+5. Build the modified EDK2 Ventoy UEFI application too. Unmodified
    ventoy_x64.efi does not contain the relocated ISO driver paths.
-4. Extract matching Ventoy filesystem resources from the rebuilt components
-   and stage them under /ventoy-secondary/ on a disposable QEMU disk only.
-   Do not overwrite m-boot's EFI fallback or its loader. All GRUB modules
-   must match the custom-built Ventoy GRUB, never be mixed with stock
-   distribution modules or m-boot GRUB modules.
-5. With Secure Boot disabled in OVMF, chainload
+6. Stage same-build Ventoy resources under /ventoy-secondary/ in a
+   disposable QEMU disk only, preserving m-boot's EFI fallback and loader.
+7. With Secure Boot disabled in OVMF, chainload
    /ventoy-secondary/EFI/BOOT/grubx64_real.efi from m-loader.
-6. Verify secondary GRUB initialization, m-boot GPT detection, ISO
-   enumeration on MBOOTDATA, UEFI ISO chainload, and kernel/live-root mount.
-7. Regression-test the modified fork with a disposable standard Ventoy GPT
-   layout; do not repeat the already successful upstream ISO baseline.
+8. Verify secondary GRUB initialization, m-boot GPT detection, ISO
+   enumeration, UEFI ISO chainload and kernel/live-root mount. Also check
+   the changed fork on a disposable standard Ventoy GPT layout.
 
 Known limits / do not claim yet
 -------------------------------
