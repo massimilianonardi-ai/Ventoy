@@ -9,8 +9,9 @@ usage()
 Usage: run-physical-usb-uefi.sh ISO-PATH BOOT-BUNDLE-DIR OUTPUT-DIR
 All arguments must already exist. Uses a new private workspace in OUTPUT-DIR.
 
-The ISO must be /m/boot/iso/proxmox-ve_9.2-1.iso on a mounted ext4
-MBOOTDATA partition 3 of an actual USB-transport GPT disk.
+The ISO must be one of /m/boot/iso/proxmox-ve_9.2-1.iso or
+/m/boot/iso/TrueNAS-SCALE-25.10.7.iso on a mounted ext4 MBOOTDATA
+partition 3 of an actual USB-transport GPT disk.
 After inspecting the USB identity, type the requested confirmation.
 Only then the script unmounts this USB data partition from the host.
 
@@ -36,8 +37,11 @@ output=$3
 iso=$(readlink -f -- "$iso")
 bundle=$(cd -- "$bundle" && pwd -P)
 output=$(cd -- "$output" && pwd -P)
-[[ "$iso" == */m/boot/iso/proxmox-ve_9.2-1.iso ]] ||
-  fail 'unexpected source ISO pathname'
+case "$iso" in
+  */m/boot/iso/proxmox-ve_9.2-1.iso|*/m/boot/iso/TrueNAS-SCALE-25.10.7.iso)
+    source_guest="/m/boot/iso/${iso##*/}" ;;
+  *) fail 'unexpected source ISO pathname' ;;
+esac
 [[ "$(stat -c %d "$iso")" != "$(stat -c %d "$output")" ]] ||
   fail 'output directory is on the physical USB'
 for tool in qemu-system-x86_64 qemu-img sgdisk lsblk findmnt \
@@ -51,7 +55,7 @@ done
   fail 'boot bundle not complete; use the published verified bundle'
 grep -Fx 'architecture=x86_64-efi' "$bundle/BUILD-INFO.txt" >/dev/null ||
   fail 'wrong boot architecture'
-grep -Fx 'source_iso_guest_path=/m/boot/iso/proxmox-ve_9.2-1.iso' \
+grep -Fx "source_iso_guest_path=$source_guest" \
   "$bundle/BUILD-INFO.txt" >/dev/null ||
   fail 'boot image expects another source ISO'
 grep -Fx 'synthetic_ext4_gpt_source_efi_startimage=passed' \
@@ -162,7 +166,7 @@ grep -F "backing file: $device" "$work/overlay-info.txt" >/dev/null ||
   fail 'qcow2 has incorrect backing device'
 
 note "QEMU starting. Log: $work/qemu.log"
-note 'Observe initial Proxmox installer only; do not start installation.'
+note 'Observe the installer boot only; do not start an installation.'
 set -- -machine q35 -accel tcg -m 3072 -smp 2 \
   -drive "if=pflash,format=raw,readonly=on,file=$code" \
   -drive "if=pflash,format=raw,file=$work/vars.fd" \
