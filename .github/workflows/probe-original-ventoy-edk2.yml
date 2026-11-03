@@ -283,6 +283,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Reconcile benign concurrent documentation commits forward-only.
+          # Never publish binaries built from stale sources if executable
+          # sources, runtime or this workflow changed after this run began.
+          git fetch origin m-boot-secondary-uefi
+          if git diff --name-only "$GITHUB_SHA" FETCH_HEAD |
+             grep -E '^(GRUB2/port/|EDK2/edk2_mod/|INSTALL/ventoy/|\.github/workflows/probe-original-ventoy-edk2.yml)'
+          then
+            echo 'Executable/test sources changed; new CI build required'
+            exit 39
+          fi
+          git checkout -B publish-usb FETCH_HEAD
           src="$RUNNER_TEMP/mboot-usb-boot"
           path=GRUB2/dist/secondary-usb-uefi
           mkdir -p "$path"
