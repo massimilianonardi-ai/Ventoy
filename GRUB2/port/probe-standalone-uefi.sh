@@ -48,21 +48,15 @@ EOF
 
 cat > "$output/runtime.cfg" <<'EOF'
 echo VTOY_NO_CORE_PROBE_START
+search --file --set=bootpart /vt-probe-boot.marker
 echo VTOY_BOOT_DEVICE=$bootpart
 ls
 search --file --set=isopart /vt-probe-image.iso
 echo VTOY_ISO_DEVICE=$isopart
-if [ -z "$bootpart" ] || [ -z "$isopart" ] || [ "$bootpart" = "$isopart" ]; then
-  echo VTOY_NO_CORE_PROBE_DIFFERENT_DISKS_REQUIRED
-  halt
-fi
 set prefix=($bootpart)/grub
 insmod ($bootpart)/grub/x86_64-efi/ventoy_source_probe.mod
-if vt_source_probe ($isopart)/vt-probe-image.iso; then
-  echo VTOY_NO_CORE_PROBE_SUCCESS
-else
-  echo VTOY_NO_CORE_PROBE_SOURCE_FAILED
-fi
+vt_source_probe ($isopart)/vt-probe-image.iso
+echo VTOY_NO_CORE_PROBE_COMPLETED
 halt
 EOF
 
@@ -110,15 +104,18 @@ timeout 90 qemu-system-x86_64 -machine q35 -accel tcg -m 1024 -smp 2 \
   -drive "if=none,format=raw,file=$output/boot-disk.img,id=boot" \
   -device virtio-blk-pci,drive=boot,bootindex=1 \
   -drive "if=none,format=raw,file=$output/iso-disk.img,id=iso" \
-  -device virtio-blk-pci,drive=iso \
+  -device virtio-blk-pci,drive=iso,bootindex=2 \
   -display none -serial mon:stdio -snapshot \
   > "$output/qemu.log" 2>&1
 qemu_status=$?
 set -e
 
-if grep -q 'VTOY_NO_CORE_PROBE_SUCCESS' "$output/qemu.log" &&
-   grep -q 'source=.*disk=.*partition=.*fs=.*bytes=' "$output/qemu.log" &&
-   ! grep -q 'VTOY_NO_CORE_PROBE_DIFFERENT_DISKS_REQUIRED' "$output/qemu.log"; then
+if grep -q 'VTOY_NO_CORE_PROBE_COMPLETED' "$output/qemu.log" &&
+   grep -q 'VTOY_BOOT_DEVICE=hd0,gpt1' "$output/qemu.log" &&
+   grep -q 'VTOY_ISO_DEVICE=hd1,gpt1' "$output/qemu.log" &&
+   grep -q 'source=(hd1,gpt1)/vt-probe-image.iso disk=hd1 partition=1' "$output/qemu.log" &&
+   grep -q 'fs=fat bytes=' "$output/qemu.log" &&
+   ! grep -q 'error: ' "$output/qemu.log"; then
   {
     echo 'uefi_probe=passed'
     echo 'loaded_by=stock-GRUB-insmod'
