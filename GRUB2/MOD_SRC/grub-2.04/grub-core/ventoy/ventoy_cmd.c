@@ -499,7 +499,16 @@ static int ventoy_load_efiboot_template(char **buf, int *datalen, int *direntoff
     char *data = NULL;
     grub_uint32_t offset;
 
-    file = ventoy_grub_file_open(GRUB_FILE_TYPE_LINUX_INITRD, "%s/ventoy/ventoy_efiboot.img.xz", ventoy_get_env("vtoy_efi_part"));
+    if (g_mboot_secondary_valid)
+    {
+        file = ventoy_grub_file_open(GRUB_FILE_TYPE_LINUX_INITRD,
+                                     "%s/ventoy_efiboot.img.xz", ventoy_get_env("vtoy_path"));
+    }
+    else
+    {
+        file = ventoy_grub_file_open(GRUB_FILE_TYPE_LINUX_INITRD,
+                                     "%s/ventoy/ventoy_efiboot.img.xz", ventoy_get_env("vtoy_efi_part"));
+    }
     if (file == NULL)
     {
         debug("failed to open file <%s>\n", "ventoy_efiboot.img.xz");
@@ -6462,7 +6471,14 @@ static grub_err_t ventoy_cmd_show_secondary_menu(grub_extcmd_context_t ctxt, int
         else if (select == 5)
         {
             grub_env_set("VTOY_CHKSUM_FILE_PATH", args[0]);
-            grub_script_execute_sourcecode("configfile $vtoy_efi_part/grub/checksum.cfg");
+            if (g_mboot_secondary_valid)
+            {
+                grub_script_execute_sourcecode("configfile $prefix/checksum.cfg");
+            }
+            else
+            {
+                grub_script_execute_sourcecode("configfile $vtoy_efi_part/grub/checksum.cfg");
+            }
         }
         else if (select == 6)
         {
