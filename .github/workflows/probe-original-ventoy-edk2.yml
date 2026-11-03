@@ -217,12 +217,10 @@ jobs:
           import sys
           path = pathlib.Path(sys.argv[1])
           target = 18 * 1024 * 1024
+          chunk = b'VTOY-PAD' * 131072
           with path.open("ab") as stream:
               while stream.tell() < target:
-                  stream.write(b'VTOY-DATA' * min(4096, (target-stream.tell())//9))
-          if path.stat().st_size < target:
-              with path.open("ab") as stream:
-                  stream.write(b'V' * (target - path.stat().st_size))
+                  stream.write(chunk[:min(len(chunk), target-stream.tell())])
           assert path.stat().st_size == target
           PY
           usb="$RUNNER_TEMP/usb-source-gpt.raw"
