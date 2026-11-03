@@ -8,6 +8,10 @@ here=$(CDPATH= cd "$(dirname "$0")" && pwd)
 mkdir "$output"
 output=$(CDPATH= cd "$output" && pwd)
 
+# A GNU-EFI callback exported via BlockIo must use UEFI's x64 MS ABI.
+# EFI_FUNCTION_WRAPPER alone wraps outgoing calls but leaves EFIAPI
+# callbacks in the host SysV ABI, causing a #GP on ReadBlocks.
+# GNU_EFI_USE_MS_ABI covers BOTH protocol callbacks and outgoing calls.
 linker=$(find /usr/lib -name elf_x86_64_efi.lds -print -quit)
 startup=$(find /usr/lib -name crt0-efi-x86_64.o -print -quit)
 [ -n "$linker" ] && [ -n "$startup" ] || {
@@ -20,18 +24,18 @@ test -f "$libdir/libgnuefi.a" || { echo 'GNU-EFI libgnuefi.a missing' >&2; exit 
 printf 'gnuefi_libdir=%s\n' "$libdir" > "$output/provenance.txt"
 
 gcc -std=gnu11 -O2 -fpic -fshort-wchar -mno-red-zone \
-  -fno-stack-protector -fno-builtin -DEFI_FUNCTION_WRAPPER \
+  -fno-stack-protector -fno-builtin -DGNU_EFI_USE_MS_ABI \
   -I/usr/include/efi -I/usr/include/efi/x86_64 \
   -Wall -Wextra -Werror -c "$here/probe-efi-app.c" \
   -o "$output/probe-efi-app.o" > "$output/build.log" 2>&1
 
 gcc -std=gnu11 -O2 -fpic -fshort-wchar -mno-red-zone \
-  -fno-stack-protector -fno-builtin -DEFI_FUNCTION_WRAPPER \
+  -fno-stack-protector -fno-builtin -DGNU_EFI_USE_MS_ABI \
   -I/usr/include/efi -I/usr/include/efi/x86_64 \
   -Wall -Wextra -Werror -c "$here/probe-efi-blockmap.c" \
   -o "$output/probe-efi-blockmap.o" >> "$output/build.log" 2>&1
 gcc -std=gnu11 -O2 -fpic -fshort-wchar -mno-red-zone \
-  -fno-stack-protector -fno-builtin -DEFI_FUNCTION_WRAPPER \
+  -fno-stack-protector -fno-builtin -DGNU_EFI_USE_MS_ABI \
   -I/usr/include/efi -I/usr/include/efi/x86_64 \
   -Wall -Wextra -Werror -c "$here/probe-efi-virtual.c" \
   -o "$output/probe-efi-virtual.o" >> "$output/build.log" 2>&1
