@@ -1,0 +1,70 @@
+name: Probe Ventoy source access with stock GRUB module
+
+on:
+  push:
+    branches: [m-boot-secondary-uefi]
+    paths:
+      - .github/workflows/probe-standalone-ventoy-module.yml
+      - GRUB2/port/probe-source.c
+      - GRUB2/port/probe-standalone-module.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out experimental fork
+        uses: actions/checkout@v4
+
+      - name: Obtain runner-matched GRUB source and module build toolchain
+        run: |
+          set -eu
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            grub-common grub-efi-amd64-bin dpkg-dev build-essential automake \
+            autoconf gettext bison flex python3 patch file
+          sudo DEBIAN_FRONTEND=noninteractive apt-get build-dep -y grub2
+
+          source_pkg=$(dpkg-query -W -f='${source:Package}' grub-common)
+          source_ver=$(dpkg-query -W -f='${Version}' grub-common)
+          mkdir -p "$RUNNER_TEMP/source-module-input"
+          cd "$RUNNER_TEMP/source-module-input"
+          apt-get source "$source_pkg=$source_ver"
+          distro=$(find "$PWD" -mindepth 1 -maxdepth 1 -type d \
+            -name 'grub2-*' -print -quit)
+          test -s "$distro/configure.ac"
+          echo "$distro" > "$RUNNER_TEMP/source-module-path"
+
+          {
+            printf 'runner_image=%s\n' "$ImageOS"
+            printf 'runner_image_version=%s\n' "$ImageVersion"
+            printf 'grub_source=%s\n' "$source_pkg"
+            printf 'grub_version=%s\n' "$source_ver"
+            printf 'grub_mkimage=%s\n' "$(grub-mkimage --version)"
+            printf 'repository_revision=%s\n' "$GITHUB_SHA"
+          } | tee "$RUNNER_TEMP/source-module-provenance.txt"
+
+      - name: Compile a real image-source module without compiling GRUB core
+        run: |
+          sh GRUB2/port/probe-standalone-module.sh \
+            "$(cat "$RUNNER_TEMP/source-module-path")" \
+            "$RUNNER_TEMP/standalone-source-probe"
+
+      - name: Upload module build evidence only (not a Ventoy release)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-grub-module-source-probe
+          path: |
+            ${{ runner.temp }}/source-module-provenance.txt
+            ${{ runner.temp }}/standalone-source-probe/result.txt
+            ${{ runner.temp }}/standalone-source-probe/autogen.log
+            ${{ runner.temp }}/standalone-source-probe/configure.log
+            ${{ runner.temp }}/standalone-source-probe/build.log
+          retention-days: 30
+          if-no-files-found: warn
