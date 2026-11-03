@@ -59,13 +59,14 @@ jobs:
           set -euo pipefail
           work="$RUNNER_TEMP/ventoy-original-edk2"
           cd "$EDK2_PATH"
-          # This pinned 2019 host toolchain predates GCC 13's stricter
-          # diagnostics. Relax only host-tool warning categories; preserve
-          # all original Ventoy EFI source and linker settings.
-          make -C BaseTools -j 4 \
-            EXTRA_OPTFLAGS="-Wno-error=vla-parameter -Wno-error=stringop-overflow -Wno-error=array-bounds -Wno-error=maybe-uninitialized" \
+          # Legacy 2019 EDK2 host utilities assume an older compiler.
+          # Relax warnings as errors ONLY for disposable BaseTools; keep
+          # original Ventoy EFI C sources/build flags untouched. Surface
+          # exact genuine errors, not just parallel make's last commands.
+          make -C BaseTools -j 4 EXTRA_OPTFLAGS=-Wno-error \
             > "$work/basetools.log" 2>&1 || {
-            tail -n 90 "$work/basetools.log" >&2
+            grep -n -B 5 -A 7 'error:' "$work/basetools.log" | tail -n 110 >&2 || :
+            tail -n 25 "$work/basetools.log" >&2
             exit 6
           }
           export WORKSPACE="$EDK2_PATH"
