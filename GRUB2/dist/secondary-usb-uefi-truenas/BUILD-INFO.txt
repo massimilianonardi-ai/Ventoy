@@ -1,0 +1,9 @@
+fixture=m-boot-experimental-x86_64-uefi-usb-iso
+architecture=x86_64-efi
+source_iso_guest_path=/m/boot/iso/TrueNAS-SCALE-25.10.7.iso
+source_iso=external-GPT-disk-read-only
+native_arm64_efi_tested=no
+physical_usb_writes=not-permitted-by-test
+grub_core_patched=no
+original_ventoy_source=experimental-branch
+build_source_revision=7f358b83d77e5e735d81aaca981d774349a0501c
