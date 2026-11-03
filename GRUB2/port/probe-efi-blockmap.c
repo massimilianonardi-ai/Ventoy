@@ -1,5 +1,6 @@
 /* Test-only UEFI consumer of real ISO sectors selected by Ventoy chunks.
- * Never installs BlockIo, virtual media, boot components or GRUB patches.
+ * A separate diagnostic installs read-only BlockIo temporarily. This
+ * never boots an installer or changes GRUB core.
  */
 #include <efi.h>
 #include <efilib.h>
@@ -83,13 +84,13 @@ print_crc (EFI_SERIAL_IO_PROTOCOL *serial, UINT32 crc)
   return uefi_call_wrapper (serial->Write, 3, serial, &bytes, message);
 }
 
-/* This EFI-side proof selects a UNIQUE whole-disk BlockIo device by
- * original os_param size/MBR identity; never by Ventoy disk branding.
- * It fails on cloned/ambiguous matches rather than picking the first.
+/* The exact real GPT GUID and valid header CRC disambiguate whole disks
+ * with identical MBR identity or file contents. Preserve original ABI.
  */
 EFI_STATUS
 vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
-                       UINT64 length, EFI_SERIAL_IO_PROTOCOL *serial)
+                        UINT64 length, const UINT8 gpt_guid[16],
+                        EFI_SERIAL_IO_PROTOCOL *serial)
 {
   EFI_GUID block_id = EFI_BLOCK_IO_PROTOCOL_GUID;
   EFI_HANDLE *handles = NULL;
@@ -101,7 +102,7 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
   UINT64 count, image_size, logical = 0, chunk_index;
   UINT32 crc = 0xffffffffU;
 
-  if (!system || !chain || length < 2616
+  if (!system || !chain || !gpt_guid || length < 2616
       || word (chain + 520, 4) != 512
       || word (chain + 2592, 4) != 2616)
     return EFI_INVALID_PARAMETER;
@@ -147,8 +148,27 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
       if (EFI_ERROR (status))
         continue;
       if (CompareMem (buffer + 0x180, chain + 17, 16)
-          || CompareMem (buffer + 0x1b8, chain + 481, 4))
-        continue;
+           || CompareMem (buffer + 0x1b8, chain + 481, 4))
+         continue;
+       status = disk_read (candidate, 1, 512, buffer);
+       if (EFI_ERROR (status) || CompareMem (buffer, "EFI PART", 8))
+         continue;
+       {
+         UINT64 header_size = word (buffer + 12, 4);
+         UINT32 expected_crc = (UINT32)word (buffer + 16, 4);
+         UINT32 observed_crc;
+         if (header_size < 92 || header_size > 512
+             || word (buffer + 24, 8) != 1
+             || word (buffer + 32, 8) != candidate->Media->LastBlock
+             || CompareMem (buffer + 56, gpt_guid, 16))
+           continue;
+         SetMem (buffer + 16, 4, 0);
+         observed_crc = vt_probe_crc32_update (0xffffffffU, buffer,
+                                                (UINTN)header_size)
+                        ^ 0xffffffffU;
+         if (observed_crc != expected_crc)
+           continue;
+       }
 
       /* The legacy MBR identity can be identical on two synthetic GPT
        * disks. Validate the actual mapped ISO PVD before selecting the
@@ -187,6 +207,8 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
   note (serial, "VT_EFI_DISK_SELECTED\r\n",
         sizeof ("VT_EFI_DISK_SELECTED\r\n") - 1);
 
+  note (serial, "VT_EFI_GPT_DISK_SELECTED\r\n",
+         sizeof ("VT_EFI_GPT_DISK_SELECTED\r\n") - 1);
   for (chunk_index = 0; chunk_index < count; ++chunk_index)
     {
       const UINT8 *chunk = chain + 2616 + chunk_index * 24;

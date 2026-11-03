@@ -1,14 +1,15 @@
 /*
  * Disposable UEFI diagnostic. Read the ORIGINAL Ventoy "mem:0x...:size:..."
  * LoadOptions and validate a chain header still owned by GRUB.
- * This does NOT install EFI BlockIo, mount an ISO, or boot an installer.
+ * The diagnostic installs and removes temporary read-only BlockIo; it
+ * never boots an installer or modifies Ventoy's original EDK2 ABI.
  */
 #include <efi.h>
 #include <efilib.h>
 
 extern EFI_STATUS vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system,
-                                         const UINT8 *chain,
-                                         UINT64 length,
+                                         const UINT8 *chain, UINT64 length,
+                                         const UINT8 gpt_guid[16],
                                          EFI_SERIAL_IO_PROTOCOL *serial);
 
 static UINTN
@@ -94,6 +95,41 @@ check_chain (EFI_LOADED_IMAGE *loaded, const UINT8 **chain_out,
   return EFI_SUCCESS;
 }
 
+/* Extra test-only LoadOptions token, NOT the upstream env_param ABI. */
+static EFI_STATUS
+parse_gpt_guid (EFI_LOADED_IMAGE *image, UINT8 guid[16])
+{
+  static const CHAR16 keyword[] = L"gptguid:";
+  const CHAR16 *option = (const CHAR16 *)image->LoadOptions;
+  UINTN count, i, j;
+
+  if (!option || (image->LoadOptionsSize % sizeof (CHAR16)) != 0)
+    return EFI_INVALID_PARAMETER;
+  count = image->LoadOptionsSize / sizeof (CHAR16);
+  for (i = 0; i + 40 <= count; ++i)
+    {
+      if (i && option[i - 1] != L' ')
+        continue;
+      for (j = 0; j < 8 && option[i + j] == keyword[j]; ++j)
+        ;
+      if (j != 8)
+        continue;
+      if (i + 40 < count && option[i + 40] != L' '
+          && option[i + 40] != 0)
+        return EFI_INVALID_PARAMETER;
+      for (j = 0; j < 16; ++j)
+        {
+          UINTN high = hex_digit (option[i + 8 + j * 2]);
+          UINTN low = hex_digit (option[i + 9 + j * 2]);
+          if (high == 255 || low == 255)
+            return EFI_INVALID_PARAMETER;
+          guid[j] = (UINT8) ((high << 4) | low);
+        }
+      return EFI_SUCCESS;
+    }
+  return EFI_INVALID_PARAMETER;
+}
+
 EFI_STATUS EFIAPI
 efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
 {
@@ -104,6 +140,7 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
   EFI_STATUS status;
   const UINT8 *chain = NULL;
   UINT64 chain_length = 0;
+  UINT8 gpt_guid[16];
   UINTN bytes;
   CHAR8 message[] = "VT_EFI_MEMORY_HANDOFF_OK\r\n";
 
@@ -114,6 +151,9 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
   if (EFI_ERROR (status))
     return status;
   status = check_chain (loaded, &chain, &chain_length);
+  if (EFI_ERROR (status))
+    return status;
+  status = parse_gpt_guid (loaded, gpt_guid);
   if (EFI_ERROR (status))
     return status;
 
@@ -127,7 +167,8 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
     bytes = sizeof (begin) - 1;
     uefi_call_wrapper (serial->Write, 3, serial, &bytes, begin);
   }
-  status = vt_check_efi_blockmap (system, chain, chain_length, serial);
+  status = vt_check_efi_blockmap (system, chain, chain_length, gpt_guid,
+                                  serial);
   if (EFI_ERROR (status))
     {
       static const CHAR8 hex[] = "0123456789abcdef";

@@ -25,6 +25,7 @@ vt_release_handoff_probe (void)
   vt_pending_chain = 0;
   grub_env_unset ("vt_probe_chain_addr");
   grub_env_unset ("vt_probe_chain_size");
+  grub_env_unset ("vt_probe_gpt_guid");
 }
 
 grub_err_t vt_probe_handoff (grub_file_t file, const char *path,
@@ -40,6 +41,10 @@ vt_probe_handoff (grub_file_t file, const char *path,
   ventoy_os_param *os;
   const grub_uint8_t *raw;
   grub_uint8_t sector[512];
+  grub_uint8_t gpt[512];
+  char gpt_guid[33];
+  grub_uint32_t header_size;
+  static const char digits[] = "0123456789abcdef";
   const char *end;
   const char *relative;
   grub_uint8_t sum = 0;
@@ -75,6 +80,28 @@ vt_probe_handoff (grub_file_t file, const char *path,
       error = grub_error (GRUB_ERR_BAD_FS, "missing whole-disk MBR");
       goto done;
     }
+  if (grub_disk_read (disk, 1, 0, sizeof (gpt), gpt))
+    {
+      error = grub_errno;
+      goto done;
+    }
+  header_size = (grub_uint32_t) gpt[12]
+                | ((grub_uint32_t) gpt[13] << 8)
+                | ((grub_uint32_t) gpt[14] << 16)
+                | ((grub_uint32_t) gpt[15] << 24);
+  if (grub_memcmp (gpt, "EFI PART", 8)
+      || header_size < 92 || header_size > sizeof (gpt))
+    {
+      error = grub_error (GRUB_ERR_BAD_FS, "invalid primary GPT header");
+      goto done;
+    }
+  /* Keep upstream os_param's MBR identity unchanged. */
+  for (i = 0; i < 16; ++i)
+    {
+      gpt_guid[2 * i] = digits[gpt[56 + i] >> 4];
+      gpt_guid[2 * i + 1] = digits[gpt[56 + i] & 15];
+    }
+  gpt_guid[32] = 0;
 
   length = sizeof (*chain) + (grub_size_t) count * sizeof (*chunks);
   chain = grub_zalloc (length);
@@ -139,6 +166,8 @@ vt_probe_handoff (grub_file_t file, const char *path,
                    (unsigned long long) length);
     grub_env_set ("vt_probe_chain_addr", addr);
     grub_env_set ("vt_probe_chain_size", size);
+    grub_env_set ("vt_probe_gpt_guid", gpt_guid);
+    grub_printf ("VT_GPT_GUID hex=%s\n", gpt_guid);
     vt_pending_chain = chain;
     chain = 0; /* owned by module until next mapping / module teardown */
   }

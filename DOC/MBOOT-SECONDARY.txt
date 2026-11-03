@@ -310,3 +310,13 @@ Known limits / do not claim yet
   made in this source-only work unit.
 - Ventoy's upstream GPLv3 license and corresponding source obligations
   continue to apply to modified redistributions.
+
+GPT source-selection proof (diagnostic only):
+- Stock GRUB passes the actual GPT disk GUID in a separate gptguid:
+  LoadOptions token, without changing original Ventoy os_param bytes.
+- GNU-EFI validates GPT header GUID, primary-header CRC and backup LBA
+  in addition to legacy MBR identity and ISO PVD; a unique disk is required.
+- QEMU adds an identical-size/MBR/ISO competing disk with a DIFFERENT GPT
+  GUID. The original EDK2 application's env_param integration, virtual-CD
+  boot/catalog, real Proxmox/TrueNAS installs and post-kernel root mounting
+  are not established by this disposable diagnostic.

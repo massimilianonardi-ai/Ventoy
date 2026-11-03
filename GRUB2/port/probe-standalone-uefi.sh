@@ -77,7 +77,7 @@ if [ -n "$efi_probe" ]; then
   cat >> "$output/runtime.cfg" <<'EOF'
 echo VTOY_EFI_MEMORY_BRIDGE_START
 if [ -n "$vt_probe_chain_addr" ]; then
-  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size
+  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size gptguid:$vt_probe_gpt_guid
   if boot; then
     echo VTOY_EFI_MEMORY_BRIDGE_RETURNED
   else
@@ -225,7 +225,33 @@ for target in boot iso; do
   fi
 done
 
-# OVMF runs without Secure Boot on two file-backed virtual disks.
+# Third disposable disk collides in size, MBR identity and ISO bytes,
+# but NOT primary GPT disk GUID. Check that the EFI probe selects hd1.
+set --
+if [ -n "$efi_probe" ]; then
+  cp "$output/iso-disk.img" "$output/iso-collision-disk.img"
+  sgdisk -G "$output/iso-collision-disk.img" > "$output/iso-collision-gpt.log" 2>&1
+  sgdisk --verify "$output/iso-collision-disk.img" >> "$output/iso-collision-gpt.log" 2>&1
+  python3 - "$output/iso-disk.img" "$output/iso-collision-disk.img" <<'PY'
+import pathlib
+import sys
+
+with pathlib.Path(sys.argv[1]).open("rb") as f:
+    source = f.read(1024)
+with pathlib.Path(sys.argv[2]).open("rb") as f:
+    rival = f.read(1024)
+if source[0x180:0x190] != rival[0x180:0x190]:
+    raise SystemExit("legacy MBR identity differs")
+if source[0x1b8:0x1bc] != rival[0x1b8:0x1bc]:
+    raise SystemExit("legacy MBR signature differs")
+if source[568:584] == rival[568:584]:
+    raise SystemExit("GPT disk GUID did not change")
+PY
+  set -- -drive "if=none,format=raw,file=$output/iso-collision-disk.img,id=rival" \
+    -device virtio-blk-pci,drive=rival,bootindex=3
+fi
+
+# OVMF runs without Secure Boot on disposable file-backed virtual disks.
 set +e
 timeout 90 qemu-system-x86_64 -machine q35 -accel tcg -m 1024 -smp 2 \
   -drive "if=pflash,format=raw,readonly=on,file=$code" \
@@ -234,7 +260,7 @@ timeout 90 qemu-system-x86_64 -machine q35 -accel tcg -m 1024 -smp 2 \
   -device virtio-blk-pci,drive=boot,bootindex=1 \
   -drive "if=none,format=raw,file=$output/iso-disk.img,id=iso" \
   -device virtio-blk-pci,drive=iso,bootindex=2 \
-  -display none -serial mon:stdio -snapshot \
+  "$@" -display none -serial mon:stdio -snapshot \
   > "$output/qemu.log" 2>&1
 qemu_status=$?
 set -e
@@ -261,7 +287,8 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
       "$output/qemu.log" "$output/vt-map-image.iso" \
       "$output/iso-disk.img" "$output/iso-map-verification.txt" \
       "$min_extents" "$part_num" efi
-    if ! grep -q 'VT_EFI_MEMORY_HANDOFF_OK' "$output/qemu.log" ||
+    if ! grep -q 'VT_EFI_GPT_DISK_SELECTED' "$output/qemu.log" ||
+       ! grep -q 'VT_EFI_MEMORY_HANDOFF_OK' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_BLOCKMAP_OK crc32=' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_VIRTUAL_BLOCKIO_OK crc32=' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_VIRTUAL_BLOCKIO_UNINSTALLED' "$output/qemu.log" ||
@@ -272,6 +299,7 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
       exit 8
     fi
     echo 'efi_memory_bridge=passed' >> "$output/runtime-result.txt"
+    echo 'efi_gpt_collision=resolved' >> "$output/runtime-result.txt"
     echo 'efi_blockio_full_iso_crc32=verified' >> "$output/runtime-result.txt"
     echo 'efi_virtual_blockio_crc32=verified' >> "$output/runtime-result.txt"
     echo 'efi_virtual_blockio_uninstalled=verified' >> "$output/runtime-result.txt"
