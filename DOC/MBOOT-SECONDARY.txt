@@ -1,6 +1,6 @@
 m-boot secondary UEFI integration — experimental fork work
 =======================================================
-Status: native Ventoy chunk/image-location ABI built in external .mod, FAT32/ext4 QEMU source proofs; NOT an OS boot
+Status: original Ventoy metadata and diagnostic GRUB-to-EFI memory bridge proved; NOT an OS boot
 Base: ventoy/Ventoy master 74cff34240dca6991b79c6656770670da7b0c39e
 
 Goal
@@ -290,8 +290,9 @@ Known limits / do not claim yet
 - Independent module insmod, real FAT32 and ext4 ISO source reads,
   raw-disk file-sector reconstruction, and native Ventoy image-location
   ABI formation have passed. The complete Ventoy ISO chainloader/EFI
-  executable has NOT been rebuilt or booted from m-boot; no EFI handoff,
-  installer/root mount, ARM64, Secure Boot or physical USB validation.
+  executable has NOT been rebuilt or booted from m-boot; no handoff
+  to the ORIGINAL Ventoy EFI app, installer/root mount, ARM64,
+  Secure Boot or physical USB validation.
   These diagnostic ISO9660 files are NON-BOOTABLE and must not be
   counted as Proxmox or TrueNAS boots.
 - GRUB 2.04 is no longer the chosen build/release version; the old Ventoy
