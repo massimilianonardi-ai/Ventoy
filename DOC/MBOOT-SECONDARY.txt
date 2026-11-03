@@ -264,6 +264,22 @@ Native Ventoy ABI conversion and ext4 source proof (2026-11-03)
   standard m-boot GPT3/ext4 path, sparse-file handling, other filesystems,
   ARM64, Secure Boot and multi-GB image behavior.
 
+Additional diagnostic EFI bridge proof (2026-11-03)
+------------------------------------------------
+Run 41631926607 PASSED: the original Ventoy chain-head metadata,
+os_param checksum, raw-disk identity and image extents were verified
+on three disposable OVMF disks, including GPT3/ext4. A test-only
+GRUB allocation remained live while stock GRUB chain.mod launched
+a separately compiled GNU-EFI diagnostic consumer using the original
+mem:...:size:... LoadOptions syntax. The actual QEMU serial log shows
+VT_EFI_MEMORY_HANDOFF_OK and return to GRUB. This proves the memory
+handoff into a diagnostic EFI executable, NOT Ventoy's own EFI
+application, virtual ISO CD, Proxmox/TrueNAS boot or installer mount.
+The original EFI program still requires its environment callbacks and
+safe source-disk identification. Its legacy MBR bytes 0x180/0x1b8
+must not be confused with a unique GPT disk identifier on arbitrary
+non-Ventoy disks. No core GRUB rebuild or physical disk writes.
+
 Known limits / do not claim yet
 -------------------------------
 - GitHub Actions source-compile probe `41600842303` applied all three
