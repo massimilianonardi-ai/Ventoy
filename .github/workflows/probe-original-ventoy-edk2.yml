@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/probe-original-ventoy-edk2.yml
       - EDK2/edk2_mod/**
+      - GRUB2/port/**
   workflow_dispatch:
 
 permissions:
@@ -115,6 +116,60 @@ jobs:
             echo 'physical_device_writes=no'
           } | tee "$work/result.txt"
 
+      - name: Prepare matching distro GRUB module source for real UEFI app
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            grub-common grub-efi-amd64-bin dpkg-dev automake autoconf \
+            gettext bison flex patch gnu-efi
+          sudo DEBIAN_FRONTEND=noninteractive apt-get build-dep -y grub2
+          source_pkg=$(dpkg-query -W -f='${source:Package}' grub-common)
+          source_ver=$(dpkg-query -W -f='${Version}' grub-common)
+          mkdir -p "$RUNNER_TEMP/original-efi-module-source"
+          cd "$RUNNER_TEMP/original-efi-module-source"
+          apt-get source "$source_pkg=$source_ver"
+          distro=$(find "$PWD" -mindepth 1 -maxdepth 1 -type d \
+            -name 'grub2-*' -print -quit)
+          test -s "$distro/configure.ac"
+          printf '%s\n' "$distro" > "$RUNNER_TEMP/original-efi-grub-source-path"
+          {
+            printf 'GRUB_VERSION=%s\n' "$source_ver"
+            grub-mkimage --version
+          } | tee "$RUNNER_TEMP/ventoy-original-edk2/grub-version.txt"
+
+      - name: Compile external module against unmodified distro GRUB
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh GRUB2/port/probe-standalone-module.sh \
+            "$(cat "$RUNNER_TEMP/original-efi-grub-source-path")" \
+            "$RUNNER_TEMP/original-efi-grub-module"
+
+      - name: Boot real original Ventoy EDK2 image under disposable OVMF
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf mtools gdisk dosfstools xorriso e2fsprogs
+          module="$RUNNER_TEMP/original-efi-grub-module/source/grub-core/ventoy_source_probe.mod"
+          binary="$RUNNER_TEMP/ventoy-original-edk2/Ventoy-original-X64.EFI"
+          test -s "$module" && test -s "$binary"
+          sh GRUB2/port/probe-standalone-uefi.sh \
+            "$module" "$RUNNER_TEMP/ventoy-original-edk2/original-fat32" \
+            fat32 "$binary" original
+          sh GRUB2/port/probe-standalone-uefi.sh \
+            "$module" "$RUNNER_TEMP/ventoy-original-edk2/original-gpt3" \
+            ext4-gpt3 "$binary" original
+          {
+            echo 'original_ventoy_edk2_runtime=passed'
+            echo 'original_efi_source_scenarios=fat32-gpt1,ext4-gpt3'
+            echo 'original_gpt_disk_guid_collision=resolved'
+            echo 'original_virtual_iso_boot=not-tested'
+          } | tee "$RUNNER_TEMP/ventoy-original-edk2/runtime-result.txt"
+
       - name: Upload build diagnostics only (not an integration release)
         if: always()
         uses: actions/upload-artifact@v4
@@ -130,5 +185,15 @@ jobs:
             ${{ runner.temp }}/ventoy-original-edk2/efi-sha256.txt
             ${{ runner.temp }}/ventoy-original-edk2/result.txt
             ${{ runner.temp }}/ventoy-original-edk2/Ventoy-original-X64.EFI
+            ${{ runner.temp }}/ventoy-original-edk2/runtime-result.txt
+            ${{ runner.temp }}/ventoy-original-edk2/grub-version.txt
+            ${{ runner.temp }}/original-efi-grub-module/result.txt
+            ${{ runner.temp }}/original-efi-grub-module/build.log
+            ${{ runner.temp }}/ventoy-original-edk2/original-fat32/runtime-result.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-fat32/qemu.log
+            ${{ runner.temp }}/ventoy-original-edk2/original-fat32/iso-map-verification.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-gpt3/runtime-result.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-gpt3/qemu.log
+            ${{ runner.temp }}/ventoy-original-edk2/original-gpt3/iso-map-verification.txt
           retention-days: 14
           if-no-files-found: warn
