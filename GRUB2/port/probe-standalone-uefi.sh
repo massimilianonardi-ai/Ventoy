@@ -19,7 +19,7 @@ esac
 [ -s "$module" ] || { echo 'Nonempty compiled module required' >&2; exit 3; }
 [ ! -e "$output" ] || { echo 'Output directory already exists' >&2; exit 4; }
 
-for binary in grub-mkimage sgdisk mkfs.vfat mkfs.ext4 debugfs mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 xorriso; do
+for binary in grub-mkimage sgdisk mkfs.vfat mkfs.ext4 debugfs mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 cmp xorriso; do
   command -v "$binary" >/dev/null 2>&1 || {
     echo "Missing test dependency: $binary" >&2
     exit 5
@@ -121,12 +121,29 @@ xorriso -as mkisofs -quiet -R -J -V VTOY_MAP_TEST \
 python3 - "$output/vt-map-image.iso" <<'PY'
 import hashlib
 import sys
+
 with open(sys.argv[1], "r+b") as stream:
+    # Fill only the ISO9660 System Area (first 16 sectors of 2048 bytes)
+    # and the known zero-only alignment gap in THIS xorriso-generated
+    # diagnostic fixture. Do not modify actual installation ISOs.
     for index in range(1024):
         stream.write(hashlib.sha256(index.to_bytes(4, "big")).digest())
+    for block in range(13, 16):
+        stream.seek(block * 4096)
+        if any(stream.read(4096)):
+            raise SystemExit("xorriso diagnostic ISO layout changed")
+        stream.seek(block * 4096)
+        for index in range(128):
+            stream.write(hashlib.sha256(
+                b"ext4-dense-fixture" + block.to_bytes(2, "big")
+                + index.to_bytes(2, "big")
+            ).digest())
 PY
 xorriso -indev "$output/vt-map-image.iso" -pvd_info \
   >> "$output/xorriso.log" 2>&1
+xorriso -indev "$output/vt-map-image.iso" -extract /payload.bin \
+  "$output/extracted-payload.bin" >> "$output/xorriso.log" 2>&1
+cmp "$output/iso-content/payload.bin" "$output/extracted-payload.bin"
 
 if [ "$source_fs" = fat32 ]; then
   mcopy -i "$output/iso-part.img" "$output/vt-probe-image.iso" ::/vt-probe-image.iso
