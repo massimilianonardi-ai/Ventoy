@@ -166,12 +166,19 @@ jobs:
           sh GRUB2/port/probe-standalone-uefi.sh \
             "$module" "$RUNNER_TEMP/ventoy-original-edk2/original-bad-guid" \
             fat32 "$binary" original-negative
+          sh GRUB2/port/probe-standalone-uefi.sh \
+            "$module" "$RUNNER_TEMP/ventoy-original-edk2/original-media-fat32" \
+            fat32 "$binary" original-media
+          sh GRUB2/port/probe-standalone-uefi.sh \
+            "$module" "$RUNNER_TEMP/ventoy-original-edk2/original-media-gpt3" \
+            ext4-gpt3 "$binary" original-media
           {
             echo 'original_ventoy_edk2_runtime=passed'
             echo 'original_efi_source_scenarios=fat32-gpt1,ext4-gpt3'
             echo 'original_gpt_disk_guid_collision=resolved'
             echo 'original_wrong_gpt_guid=rejected'
-            echo 'original_virtual_iso_boot=not-tested'
+            echo 'original_virtual_blockio=full_crc32_verified_and_uninstalled'
+            echo 'original_efi_iso_bootloader=not-tested'
           } | tee "$RUNNER_TEMP/ventoy-original-edk2/runtime-result.txt"
 
       - name: Upload build diagnostics only (not an integration release)
@@ -202,5 +209,11 @@ jobs:
             ${{ runner.temp }}/ventoy-original-edk2/original-bad-guid/runtime-result.txt
             ${{ runner.temp }}/ventoy-original-edk2/original-bad-guid/qemu.log
             ${{ runner.temp }}/ventoy-original-edk2/original-bad-guid/iso-map-verification.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-media-fat32/runtime-result.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-media-fat32/qemu.log
+            ${{ runner.temp }}/ventoy-original-edk2/original-media-fat32/iso-map-verification.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-media-gpt3/runtime-result.txt
+            ${{ runner.temp }}/ventoy-original-edk2/original-media-gpt3/qemu.log
+            ${{ runner.temp }}/ventoy-original-edk2/original-media-gpt3/iso-map-verification.txt
           retention-days: 14
           if-no-files-found: warn

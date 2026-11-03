@@ -4,7 +4,7 @@
 set -eu
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 5 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative]]" >&2
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media]]" >&2
   exit 2
 fi
 
@@ -15,7 +15,7 @@ efi_probe=${4:-}
 efi_mode=${5:-diagnostic}
 case "$efi_mode" in
   diagnostic) ;;
-  original|original-negative) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
+  original|original-negative|original-media) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
   *) echo "Unknown EFI mode: $efi_mode" >&2; exit 2 ;;
 esac
 if [ -n "$efi_probe" ] && [ ! -s "$efi_probe" ]; then
@@ -93,6 +93,26 @@ if [ -n "$vt_probe_chain_addr" ]; then
   echo VTOY_ORIGINAL_BAD_GUID_STATUS=$vt_original_source_probe
 else
   echo VTOY_ORIGINAL_BAD_GUID_MISSING
+fi
+EOF
+elif [ -n "$efi_probe" ] && [ "$efi_mode" = original-media ]; then
+  cat >> "$output/runtime.cfg" <<'EOF'
+echo VTOY_ORIGINAL_MEDIA_BEGIN
+if [ -n "$vt_probe_chain_addr" ]; then
+  set VTOY_MBOOT_SECONDARY=1
+  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size gptguid:$vt_probe_gpt_guid env_param=$vt_probe_env_addr mboot_media_probe=1
+  if boot; then
+    echo VTOY_ORIGINAL_MEDIA_RETURNED
+  else
+    echo VTOY_ORIGINAL_MEDIA_FAILED
+  fi
+  echo VTOY_ORIGINAL_SOURCE_STATUS=$vt_original_source_probe
+  echo VTOY_ORIGINAL_MEDIA_STATUS=$vt_original_media_probe
+  echo VTOY_ORIGINAL_MEDIA_PUBLISHED=$vt_original_virtual_published
+  echo VTOY_ORIGINAL_MEDIA_CRC32=$vt_original_virtual_crc32
+  echo VTOY_ORIGINAL_MEDIA_UNINSTALLED=$vt_original_virtual_uninstalled
+else
+  echo VTOY_ORIGINAL_MEDIA_MISSING
 fi
 EOF
 elif [ -n "$efi_probe" ] && [ "$efi_mode" = original ]; then
@@ -335,6 +355,33 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
       echo 'original_ventoy_efi_app_executed=passed' >> "$output/runtime-result.txt"
       echo 'original_efi_bad_gpt_guid=rejected' >> "$output/runtime-result.txt"
       echo 'original_efi_virtual_cd_boot=not-tested' >> "$output/runtime-result.txt"
+    elif [ "$efi_mode" = original-media ]; then
+      python3 "$(dirname "$0")/verify-extent-map.py" \
+        "$output/qemu.log" "$output/vt-map-image.iso" \
+        "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+        "$min_extents" "$part_num"
+      expected_crc=$(python3 - "$output/vt-map-image.iso" <<'PYCRC'
+import pathlib
+import sys
+import zlib
+print(f"{zlib.crc32(pathlib.Path(sys.argv[1]).read_bytes()):08x}")
+PYCRC
+)
+      if ! grep -q 'VTOY_ORIGINAL_MEDIA_RETURNED' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_SOURCE_STATUS=selected' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_MEDIA_STATUS=verified' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_MEDIA_PUBLISHED=yes' "$output/qemu.log" ||
+         ! grep -q "VTOY_ORIGINAL_MEDIA_CRC32=$expected_crc" "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_MEDIA_UNINSTALLED=yes' "$output/qemu.log" ||
+         grep -q 'VTOY_ORIGINAL_MEDIA_FAILED' "$output/qemu.log"; then
+        echo 'original_efi_virtual_media=failed' >&2
+        tail -n 110 "$output/qemu.log" >&2
+        exit 8
+      fi
+      echo 'original_ventoy_efi_virtual_media=passed' >> "$output/runtime-result.txt"
+      echo 'original_efi_virtual_blockio_full_crc32=verified' >> "$output/runtime-result.txt"
+      echo 'original_efi_virtual_blockio_uninstalled=verified' >> "$output/runtime-result.txt"
+      echo 'original_efi_bootloader_start=not-tested' >> "$output/runtime-result.txt"
     elif [ "$efi_mode" = original ]; then
       python3 "$(dirname "$0")/verify-extent-map.py" \
         "$output/qemu.log" "$output/vt-map-image.iso" \
