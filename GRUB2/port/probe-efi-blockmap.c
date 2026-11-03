@@ -148,27 +148,27 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
       if (EFI_ERROR (status))
         continue;
       if (CompareMem (buffer + 0x180, chain + 17, 16)
-           || CompareMem (buffer + 0x1b8, chain + 481, 4))
-         continue;
-       status = disk_read (candidate, 1, 512, buffer);
-       if (EFI_ERROR (status) || CompareMem (buffer, "EFI PART", 8))
-         continue;
-       {
-         UINT64 header_size = word (buffer + 12, 4);
-         UINT32 expected_crc = (UINT32)word (buffer + 16, 4);
-         UINT32 observed_crc;
-         if (header_size < 92 || header_size > 512
-             || word (buffer + 24, 8) != 1
-             || word (buffer + 32, 8) != candidate->Media->LastBlock
-             || CompareMem (buffer + 56, gpt_guid, 16))
-           continue;
-         SetMem (buffer + 16, 4, 0);
-         observed_crc = vt_probe_crc32_update (0xffffffffU, buffer,
-                                                (UINTN)header_size)
-                        ^ 0xffffffffU;
-         if (observed_crc != expected_crc)
-           continue;
-       }
+          || CompareMem (buffer + 0x1b8, chain + 481, 4))
+        continue;
+      status = disk_read (candidate, 1, 512, buffer);
+      if (EFI_ERROR (status) || CompareMem (buffer, "EFI PART", 8))
+        continue;
+      {
+        UINT64 header_size = word (buffer + 12, 4);
+        UINT32 expected_crc = (UINT32)word (buffer + 16, 4);
+        UINT32 observed_crc;
+        if (header_size < 92 || header_size > 512
+            || word (buffer + 24, 8) != 1
+            || word (buffer + 32, 8) != candidate->Media->LastBlock
+            || CompareMem (buffer + 56, gpt_guid, 16))
+          continue;
+        SetMem (buffer + 16, 4, 0);
+        observed_crc = vt_probe_crc32_update (0xffffffffU, buffer,
+                                               (UINTN)header_size)
+                       ^ 0xffffffffU;
+        if (observed_crc != expected_crc)
+          continue;
+      }
 
       /* The legacy MBR identity can be identical on two synthetic GPT
        * disks. Validate the actual mapped ISO PVD before selecting the
