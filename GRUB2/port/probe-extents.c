@@ -338,6 +338,17 @@ vt_probe_extent_map (grub_command_t cmd __attribute__ ((unused)),
 
       if (got != (grub_ssize_t) amount || map.bad)
         {
+          grub_err_t read_errno = grub_errno;
+          char read_message[128];
+
+          grub_snprintf (read_message, sizeof (read_message), "%s",
+                         grub_errmsg ? grub_errmsg : "(none)");
+          grub_printf ("VT_MAP_READ_ERROR code=%u got=%ld expected=%lu "
+                       "offset=%llu map=%d cause=%s\n",
+                       (unsigned) read_errno, (long) got,
+                       (unsigned long) amount,
+                       (unsigned long long) (file->size - remaining),
+                       map.bad, read_message);
           err = grub_error (GRUB_ERR_READ_ERROR,
                             "ISO extent capture failed (read=%ld, map=%d)",
                             (long) got, map.bad);
