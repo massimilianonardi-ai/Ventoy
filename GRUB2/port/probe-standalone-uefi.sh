@@ -4,7 +4,7 @@
 set -eu
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 5 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media]]" >&2
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media|original-boot]]" >&2
   exit 2
 fi
 
@@ -15,7 +15,7 @@ efi_probe=${4:-}
 efi_mode=${5:-diagnostic}
 case "$efi_mode" in
   diagnostic) ;;
-  original|original-negative|original-media) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
+  original|original-negative|original-media|original-boot) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
   *) echo "Unknown EFI mode: $efi_mode" >&2; exit 2 ;;
 esac
 if [ -n "$efi_probe" ] && [ ! -s "$efi_probe" ]; then
@@ -28,6 +28,10 @@ case "$source_fs" in
   ext4-gpt3) expected_grub_fs='fs=ext2'; min_extents=1; part_num=3 ;;
   *) echo "Unsupported source filesystem: $source_fs" >&2; exit 2 ;;
 esac
+if [ "$efi_mode" = original-boot ]; then
+  test -s "${VTOY_ISO_BOOT_EFI:-}" || { echo 'Missing genuine EFI payload for ISO' >&2; exit 4; }
+  test -s "${VTOY_ISO_DRIVER_EFI:-}" || { echo 'Missing original Ventoy ISO9660 EFI driver' >&2; exit 4; }
+fi
 [ -s "$module" ] || { echo 'Nonempty compiled module required' >&2; exit 3; }
 [ ! -e "$output" ] || { echo 'Output directory already exists' >&2; exit 4; }
 
@@ -93,6 +97,27 @@ if [ -n "$vt_probe_chain_addr" ]; then
   echo VTOY_ORIGINAL_BAD_GUID_STATUS=$vt_original_source_probe
 else
   echo VTOY_ORIGINAL_BAD_GUID_MISSING
+fi
+EOF
+elif [ -n "$efi_probe" ] && [ "$efi_mode" = original-boot ]; then
+  cat >> "$output/runtime.cfg" <<'EOF'
+echo VTOY_ORIGINAL_ISO_BOOT_BEGIN
+if [ -n "$vt_probe_chain_addr" ]; then
+  set VTOY_MBOOT_SECONDARY=1
+  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size gptguid:$vt_probe_gpt_guid env_param=$vt_probe_env_addr mboot_boot_probe=1
+  if boot; then
+    echo VTOY_ORIGINAL_ISO_BOOT_RETURNED
+  else
+    echo VTOY_ORIGINAL_ISO_BOOT_FAILED
+  fi
+  echo VTOY_ORIGINAL_SOURCE_STATUS=$vt_original_source_probe
+  echo VTOY_ORIGINAL_ISO_DRIVER=$vt_original_iso_driver
+  echo VTOY_ORIGINAL_MEDIA_STATUS=$vt_original_media_probe
+  echo VTOY_ORIGINAL_MEDIA_CRC32=$vt_original_virtual_crc32
+  echo VTOY_ORIGINAL_MEDIA_UNINSTALLED=$vt_original_virtual_uninstalled
+  echo VTOY_ORIGINAL_BOOT_STATUS=$vt_original_boot_probe
+else
+  echo VTOY_ORIGINAL_ISO_BOOT_MISSING
 fi
 EOF
 elif [ -n "$efi_probe" ] && [ "$efi_mode" = original-media ]; then
@@ -195,6 +220,11 @@ mcopy -i "$output/boot-part.img" "$module" ::/grub/x86_64-efi/ventoy_source_prob
 if [ -n "$efi_probe" ]; then
   mcopy -i "$output/boot-part.img" "$efi_probe" ::/EFI/BOOT/VTOYDIAG.EFI
 fi
+if [ "$efi_mode" = original-boot ]; then
+  mmd -i "$output/boot-part.img" ::/ventoy-secondary ::/ventoy-secondary/ventoy
+  mcopy -i "$output/boot-part.img" "$VTOY_ISO_DRIVER_EFI" \
+    ::/ventoy-secondary/ventoy/iso9660_x64.efi
+fi
 mcopy -i "$output/boot-part.img" "$output/runtime.cfg" ::/grub/runtime.cfg
 echo 'bootloader marker' > "$output/vt-probe-boot.marker"
 mcopy -i "$output/boot-part.img" "$output/vt-probe-boot.marker" ::/vt-probe-boot.marker
@@ -211,14 +241,62 @@ with open(sys.argv[1], "wb") as stream:
     for index in range(4096):
         stream.write(hashlib.sha256(index.to_bytes(4, "big")).digest() * 16)
 PY
-xorriso -as mkisofs -quiet -no-pad -R -J -V VTOY_MAP_TEST \
-  -o "$output/vt-map-image.iso" "$output/iso-content" \
-  > "$output/xorriso.log" 2>&1
+if [ "$efi_mode" = original-boot ]; then
+  mkdir -p "$output/iso-content/EFI/BOOT"
+  cp "$VTOY_ISO_BOOT_EFI" "$output/iso-content/EFI/BOOT/BOOTX64.EFI"
+  truncate -s 4M "$output/iso-content/efiboot.img"
+  mkfs.vfat -F 12 "$output/iso-content/efiboot.img" > "$output/efiboot-fat.log" 2>&1
+  mmd -i "$output/iso-content/efiboot.img" ::/EFI ::/EFI/BOOT
+  mcopy -i "$output/iso-content/efiboot.img" "$VTOY_ISO_BOOT_EFI" \
+    ::/EFI/BOOT/BOOTX64.EFI
+  xorriso -as mkisofs -quiet -no-pad -R -J -V VTOY_MAP_TEST \
+    -eltorito-alt-boot -e efiboot.img -no-emul-boot \
+    -o "$output/vt-map-image.iso" "$output/iso-content" \
+    > "$output/xorriso.log" 2>&1
+  xorriso -indev "$output/vt-map-image.iso" \
+    -report_el_torito plain >> "$output/xorriso.log" 2>&1
+  xorriso -osirrox on -indev "$output/vt-map-image.iso" \
+    -extract /EFI/BOOT/BOOTX64.EFI "$output/extracted-boot-efi" \
+    >> "$output/xorriso.log" 2>&1
+  cmp "$VTOY_ISO_BOOT_EFI" "$output/extracted-boot-efi"
+  python3 - "$output/vt-map-image.iso" "$output/boot-catalog-verification.txt" <<'PYCAT'
+import pathlib
+import struct
+import sys
+
+data = pathlib.Path(sys.argv[1]).read_bytes()
+records = [data[2048*n:2048*(n+1)] for n in range(16, 48)]
+entries = [r for r in records if len(r) == 2048 and r[0] == 0
+           and r[1:6] == b'CD001'
+           and r[7:30].startswith(b'EL TORITO SPECIFICATION')]
+if len(entries) != 1:
+    raise SystemExit('Expected exactly one genuine El Torito boot descriptor')
+catalog_lba = struct.unpack_from('<I', entries[0], 71)[0]
+catalog = data[catalog_lba*2048:(catalog_lba+1)*2048]
+if len(catalog) != 2048 or catalog[0] != 1 or catalog[1] != 0xef:
+    raise SystemExit('Missing El Torito EFI validation header')
+if catalog[30:32] != bytes((0x55, 0xaa)) or catalog[32] != 0x88:
+    raise SystemExit('Invalid boot catalog or non-bootable EFI entry')
+if sum(struct.unpack('<16H', catalog[:32])) & 0xffff:
+    raise SystemExit('El Torito validation checksum mismatch')
+boot_lba = struct.unpack_from('<I', catalog, 40)[0]
+if boot_lba < 16 or boot_lba*2048 >= len(data):
+    raise SystemExit('El Torito EFI boot image outside ISO')
+pathlib.Path(sys.argv[2]).write_text(
+    f'el_torito_efi_catalog=verified\nboot_catalog_lba={catalog_lba}\n'
+    f'efi_image_lba={boot_lba}\n'
+)
+PYCAT
+else
+  xorriso -as mkisofs -quiet -no-pad -R -J -V VTOY_MAP_TEST \
+    -o "$output/vt-map-image.iso" "$output/iso-content" \
+    > "$output/xorriso.log" 2>&1
+fi
 
 # ISO9660 bytes 0..32767 are the reserved System Area. Nonzero data
 # here makes the ext4 fixture's initial file blocks non-sparse when
 # populated by mkfs.ext4 -d; the primary volume descriptor is untouched.
-python3 - "$output/vt-map-image.iso" <<'PY'
+python3 - "$output/vt-map-image.iso" "$efi_mode" <<'PY'
 import hashlib
 import sys
 
@@ -228,7 +306,7 @@ with open(sys.argv[1], "r+b") as stream:
     # diagnostic fixture. Do not modify actual installation ISOs.
     for index in range(1024):
         stream.write(hashlib.sha256(index.to_bytes(4, "big")).digest())
-    for block in range(13, 16):
+    for block in (range(0) if sys.argv[2] == 'original-boot' else range(13, 16)):
         stream.seek(block * 4096)
         if any(stream.read(4096)):
             raise SystemExit("xorriso diagnostic ISO layout changed")
@@ -253,6 +331,9 @@ if [ "$source_fs" = fat32 ]; then
   truncate -s 1536K "$output/filler-B.bin"
   truncate -s 1M "$output/filler-C.bin"
   truncate -s 58M "$output/filler-D.bin"
+  if [ "$efi_mode" = original-boot ]; then
+    truncate -s 50M "$output/filler-D.bin"
+  fi
   mcopy -i "$output/iso-part.img" "$output/filler-A.bin" ::/A.FILL
   mcopy -i "$output/iso-part.img" "$output/filler-B.bin" ::/B.FILL
   mcopy -i "$output/iso-part.img" "$output/filler-C.bin" ::/C.FILL
@@ -355,6 +436,35 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
       echo 'original_ventoy_efi_app_executed=passed' >> "$output/runtime-result.txt"
       echo 'original_efi_bad_gpt_guid=rejected' >> "$output/runtime-result.txt"
       echo 'original_efi_virtual_cd_boot=not-tested' >> "$output/runtime-result.txt"
+    elif [ "$efi_mode" = original-boot ]; then
+      python3 "$(dirname "$0")/verify-extent-map.py" \
+        "$output/qemu.log" "$output/vt-map-image.iso" \
+        "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+        "$min_extents" "$part_num"
+      expected_crc=$(python3 - "$output/vt-map-image.iso" <<'PYCRC'
+import pathlib
+import sys
+import zlib
+print(f"{zlib.crc32(pathlib.Path(sys.argv[1]).read_bytes()):08x}")
+PYCRC
+)
+      if ! grep -q 'VT_ORIGINAL_ISO_EFI_STARTIMAGE_EXECUTED' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_ISO_BOOT_RETURNED' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_SOURCE_STATUS=selected' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_ISO_DRIVER=started' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_MEDIA_STATUS=verified' "$output/qemu.log" ||
+         ! grep -q "VTOY_ORIGINAL_MEDIA_CRC32=$expected_crc" "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_MEDIA_UNINSTALLED=yes' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_BOOT_STATUS=returned' "$output/qemu.log" ||
+         grep -q 'VTOY_ORIGINAL_ISO_BOOT_FAILED' "$output/qemu.log"; then
+        echo 'original_efi_iso_startimage=failed' >&2
+        tail -n 130 "$output/qemu.log" >&2
+        exit 8
+      fi
+      echo 'original_efi_iso_startimage=passed' >> "$output/runtime-result.txt"
+      echo 'original_efi_el_torito_catalog=verified' >> "$output/runtime-result.txt"
+      echo 'original_efi_virtual_blockio_full_crc32=verified' >> "$output/runtime-result.txt"
+      echo 'original_efi_iso_driver=started' >> "$output/runtime-result.txt"
     elif [ "$efi_mode" = original-media ]; then
       python3 "$(dirname "$0")/verify-extent-map.py" \
         "$output/qemu.log" "$output/vt-map-image.iso" \
