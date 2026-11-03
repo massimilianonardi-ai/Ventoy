@@ -357,3 +357,20 @@ Original env_param callback extension:
   real GRUB setter performs a temporary runtime roundtrip, verified by
   the getter and reset before return. This is not a stand-in environment.
 - Still a diagnostic GNU-EFI consumer, NOT an actual VentoyEfiMain test.
+
+Original EDK2 runtime source selection on disposable UEFI (experimental):
+- The REAL upstream VentoyEfiMain now has an explicit mboot_source_probe=1
+  verification-only path requiring original GRUB env_param callbacks,
+  VTOY_MBOOT_SECONDARY=1, and the separate raw GPT gptguid: token.
+- The original app parses the native Ventoy chain, validates sector map,
+  legacy MBR identity, unique GPT GUID and primary GPT header CRC, reads
+  the mapped ISO9660 PVD from the selected EFI BlockIo device and reports
+  selected/rejected via the real GRUB environment setter.
+- This opt-in mode returns BEFORE modifying runtime variables, installing
+  virtual media or attempting to execute an ISO bootloader; default Ventoy
+  path remains unchanged. Only the fork's EDK2 overlay implements the path.
+- CI run 41659888263 on 3d95311a85ab7886a9a878e2c257cbd9a3ee486a
+  succeeded for FAT32 GPT1 and ext4 GPT3 under actual OVMF + stock GRUB,
+  despite an additional same-MBR different-GPT-GUID whole disk. No original
+  EDK2 boot catalog use or installer boot was proven. Negative wrong-GPT-GUID
+  test remains to be validated before declaring rejection proof.
