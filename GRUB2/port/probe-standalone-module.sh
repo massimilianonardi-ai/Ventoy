@@ -37,7 +37,15 @@ if ! (
   ./autogen.sh > "$output/autogen.log" 2>&1 &&
   ./configure --with-platform=efi --target=x86_64 \
     --prefix="$output/stage" > "$output/configure.log" 2>&1 &&
-  make -C grub-core -j 4 ventoy_source_probe.module > "$output/build.log" 2>&1
+  make -C grub-core -j 4 ventoy_source_probe.module genmod.sh build-grub-module-verifier > "$output/build.log" 2>&1 &&
+  cp /usr/lib/grub/x86_64-efi/moddep.lst "$output/module-dependencies.lst" &&
+  printf 'ventoy_source_probe:\\n' >> "$output/module-dependencies.lst" &&
+  (
+    cd grub-core
+    sh ./genmod.sh "$output/module-dependencies.lst" \
+      ventoy_source_probe.module build-grub-module-verifier \
+      ventoy_source_probe.mod >> "$output/build.log" 2>&1
+  )
 ); then
   printf 'module_build=failed\n' > "$output/result.txt"
   for name in autogen configure build; do
@@ -61,6 +69,8 @@ fi
   echo 'grub_core_patched=no'
   echo 'grub_core_recompiled=no'
   echo 'runtime_boot_tested=no'
+  echo 'source=runner-matched-GRUB-2.12'
+  echo 'generator=GRUB-genmod-and-module-verifier'
   sha256sum "$mod"
   file "$mod"
 } | tee "$output/result.txt"
