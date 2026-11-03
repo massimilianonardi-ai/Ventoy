@@ -24,9 +24,15 @@ gcc -std=gnu11 -O2 -fpic -fshort-wchar -mno-red-zone \
   -I/usr/include/efi -I/usr/include/efi/x86_64 \
   -Wall -Wextra -Werror -c "$here/probe-efi-app.c" \
   -o "$output/probe-efi-app.o" > "$output/build.log" 2>&1
+
+gcc -std=gnu11 -O2 -fpic -fshort-wchar -mno-red-zone \
+  -fno-stack-protector -fno-builtin -DEFI_FUNCTION_WRAPPER \
+  -I/usr/include/efi -I/usr/include/efi/x86_64 \
+  -Wall -Wextra -Werror -c "$here/probe-efi-blockmap.c" \
+  -o "$output/probe-efi-blockmap.o" >> "$output/build.log" 2>&1
 ld -nostdlib -znocombreloc -T "$linker" -shared -Bsymbolic \
   -L"$libdir" -o "$output/probe-efi-app.so" \
-  "$startup" "$output/probe-efi-app.o" -lefi -lgnuefi \
+  "$startup" "$output/probe-efi-app.o" "$output/probe-efi-blockmap.o" -lefi -lgnuefi \
   >> "$output/build.log" 2>&1
 objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym \
   -j .rel -j .rela -j .reloc -O efi-app-x86_64 \
