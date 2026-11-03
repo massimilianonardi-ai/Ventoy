@@ -123,6 +123,57 @@ def main():
                 (img_start, img_end - img_start + 1, disk_start),
                 "Ventoy image-location region disagrees with chunk")
 
+    # Reconstruct the actual 512-byte upstream ventoy_os_param from
+    # the GRUB module's byte-level diagnostic dump. Compare legacy disk
+    # identifiers with the REAL whole-disk MBR, not an invented device ID.
+    handoff = re.search(
+        r"VT_HANDOFF head=(\\d+) bytes=(\\d+) offset=(\\d+) count=(\\d+)",
+        serial
+    )
+    checked(handoff is not None, "missing native Ventoy chain header")
+    head_len, package_len, chunk_off, chunk_count = map(int, handoff.groups())
+    checked(head_len == 2616 and chunk_off == head_len
+            and chunk_count == len(records)
+            and package_len == head_len + len(records) * 24,
+            "invalid original Ventoy chain-head/chunk ABI size")
+    checked("VT_HANDOFF_PREPARED efi_invoke=no catalog_unverified=yes" in serial,
+            "handoff diagnostic must not claim EFI boot")
+
+    serialized = [
+        (int(n), bytes.fromhex(payload))
+        for n, payload in re.findall(
+            r"VT_OS_BYTES i=(\\d+) hex=([0-9a-f]{32})", serial
+        )
+    ]
+    checked(len(serialized) == 32 and
+            all(n == i for i, (n, _) in enumerate(serialized)),
+            "incomplete or reordered native os_param byte serialization")
+    os_param = b"".join(payload for _, payload in serialized)
+    checked(len(os_param) == 512 and sum(os_param) % 256 == 0,
+            "Ventoy os_param has invalid size/checksum")
+    checked(os_param[:16] ==
+            bytes.fromhex("20207777772e76656e746f792e6e6574"),
+            "unexpected original Ventoy GUID")
+    checked(struct.unpack_from("<Q", os_param, 33)[0] ==
+            disk_path.stat().st_size, "wrong real backing-disk size")
+    checked(struct.unpack_from("<H", os_param, 41)[0] == 1,
+            "wrong backing GPT partition index")
+    checked(struct.unpack_from("<H", os_param, 43)[0] in (2, 5),
+            "unexpected Ventoy source FS type")
+    checked(os_param[45:429].split(b"\\0", 1)[0] == b"/vt-map-image.iso",
+            "Ventoy os_param lost actual ISO path")
+    checked(struct.unpack_from("<Q", os_param, 429)[0] == expected_size,
+            "Ventoy os_param image size mismatch")
+    checked(os_param[437:449] == b"\\0" * 12
+            and os_param[451] == 0 and os_param[455] == 0,
+            "unsupported memory pointer, chain type or VLNK flag")
+
+    with disk_path.open("rb") as disk_ident:
+        mbr = disk_ident.read(512)
+    checked(os_param[17:33] == mbr[0x180:0x190]
+            and os_param[481:485] == mbr[0x1b8:0x1bc],
+            "Ventoy handoff disk identifiers disagree with raw disk")
+
     image_bytes = iso_path.stat().st_size
     checked(image_bytes == expected_size and image_bytes % 2048 == 0,
             "ISO size does not match GRUB or ISO9660 sector alignment")
@@ -183,6 +234,8 @@ def main():
         "iso_map_verification=passed\n"
         "iso_format=iso9660\n"
         "ventoy_chunk_abi=verified\n"
+        "ventoy_os_param_abi=verified\n"
+        "ventoy_chain_head_abi=verified\n"
         "ventoy_image_location_abi=verified\n"
         "source_disk=hd1,gpt1\n"
         f"image_bytes={image_bytes}\n"
