@@ -350,3 +350,10 @@ Original EDK2 build experiment:
   deployed to m-boot or the operator USB based on successful compilation.
 - The separate GNU-EFI diagnostic still tests runtime ABI handoff until
   the authentic EDK2 app is safely executable in disposable OVMF.
+
+Original env_param callback extension:
+- The GNU-EFI consumer now exercises BOTH original ventoy_grub_param
+  callback slots: real GRUB getter verifies source-status and GPT identity;
+  real GRUB setter performs a temporary runtime roundtrip, verified by
+  the getter and reset before return. This is not a stand-in environment.
+- Still a diagnostic GNU-EFI consumer, NOT an actual VentoyEfiMain test.

@@ -137,6 +137,7 @@ parse_gpt_guid (EFI_LOADED_IMAGE *image, UINT8 guid[16])
  * The full object (including set, replacements, printf) is allocated
  * using the upstream ventoy.h inside the GRUB module. */
 typedef const char *(*vt_grub_env_get_pf) (const char *);
+typedef int (*vt_grub_env_set_pf) (const char *, const char *);
 
 static EFI_STATUS
 check_original_env_param (EFI_LOADED_IMAGE *loaded,
@@ -148,7 +149,9 @@ check_original_env_param (EFI_LOADED_IMAGE *loaded,
   UINTN i, j, digit, seen;
   UINT64 address;
   vt_grub_env_get_pf get;
+  vt_grub_env_set_pf set;
   const char *check_result;
+  const char *roundtrip;
   const char *source_guid;
   static const char hex[] = "0123456789abcdef";
 
@@ -181,7 +184,9 @@ check_original_env_param (EFI_LOADED_IMAGE *loaded,
       /* Unlike a text-only simulation, this calls the actual GRUB
        * function at the original ABI's first-field pointer. */
       CopyMem (&get, (const VOID *)(UINTN)address, sizeof (get));
-      if (!get)
+      CopyMem (&set, (const UINT8 *)(UINTN)address + sizeof (get),
+               sizeof (set));
+      if (!get || !set)
         return EFI_COMPROMISED_DATA;
       check_result = get ("VTOY_CHKDEV_RESULT_STRING");
       if (!check_result || check_result[0] != '0' || check_result[1])
@@ -195,6 +200,22 @@ check_original_env_param (EFI_LOADED_IMAGE *loaded,
           return EFI_SECURITY_VIOLATION;
       if (source_guid[32])
         return EFI_SECURITY_VIOLATION;
+
+      /* The original Ventoy EDK2 side can also call grub_env_set.
+       * Exercise the genuine second ABI callback against isolated GRUB
+       * runtime state, verify roundtrip through the real getter, and
+       * clear our temporary value before returning. */
+      if (set ("vt_probe_efi_roundtrip", "original-callback") != 0)
+        return EFI_DEVICE_ERROR;
+      roundtrip = get ("vt_probe_efi_roundtrip");
+      if (!roundtrip || CompareMem (roundtrip, "original-callback", 17)
+          || roundtrip[17])
+        {
+          set ("vt_probe_efi_roundtrip", "");
+          return EFI_SECURITY_VIOLATION;
+        }
+      if (set ("vt_probe_efi_roundtrip", "") != 0)
+        return EFI_DEVICE_ERROR;
       return EFI_SUCCESS;
     }
   return EFI_INVALID_PARAMETER;
@@ -238,7 +259,7 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
     return EFI_NOT_FOUND;
 
   {
-    CHAR8 begin[] = "VT_EFI_ORIGINAL_ENV_PARAM_OK\r\n";
+    CHAR8 begin[] = "VT_EFI_ORIGINAL_ENV_PARAM_GET_SET_OK\r\n";
     bytes = sizeof (begin) - 1;
     uefi_call_wrapper (serial->Write, 3, serial, &bytes, begin);
   }
