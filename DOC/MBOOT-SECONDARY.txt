@@ -22,6 +22,40 @@ GPT 1: BIOS Boot
 GPT 2: FAT32, label MBOOTESP, 512 MiB (m-boot primary boot files)
 GPT 3: ext4, label MBOOTDATA, contains /m/boot/iso/
 
+m-boot simplification target (not yet implemented)
+-------------------------------------------------
+Keep the full Ventoy ISO compatibility and kernel-handoff engine, but do
+not require the operator to install a Ventoy-branded disk, keep an ISO
+on a special Ventoy partition, or create .vlnk descriptors for ISO files
+on another disk. m-boot may use its usual GPT 2 ESP and GPT 3 ext4 data
+partition for a DEFAULT local ISO directory; these are not requirements
+for the ISO engine or for an explicitly selected image elsewhere.
+
+In the optional m-boot secondary mode:
+- Identify the chosen ISO by its actual accessible GRUB device/partition
+  and file path, including files on other disks; validate that file and
+  the sector mappings needed for kernel/OS handoff, not Ventoy branding.
+- Keep bootloader resources separate from ISO file location; preserve
+  existing standard-Ventoy identity/layout checks only for standard mode.
+- Treat the .vlnk and fake-vlnk path redirect as legacy compatibility
+  routing, not the target primary mechanism for selecting external ISO.
+- Preserve data needed by Ventoy's image sector mapping and OS parameter
+  handoff, including the ISO's real disk signature and partition identity.
+
+Current mismatch: the secondary fork still validates p2 MBOOTESP/p3
+MBOOTDATA in ventoy_check_mboot_device(), calculates default cached
+partition sizes from fixed GPT indexes, and uses vtoy_iso_part and
+vt_set_fake_vlnk in menu/boot paths. The port probes do NOT yet remove
+those dependencies. Avoid disabling them alone without real image-source
+tracking and boot validation.
+
+Required disposable UEFI acceptance: boot an ISO from normal /m/boot/iso,
+then from an arbitrary readable path/partition and another attached disk
+without a .vlnk; confirm the OS finds the selected ISO after kernel
+handoff. Confirm missing/inaccessible ISO fails safely. Re-test ordinary
+Ventoy disk layout checks in standard mode; never use physical USB for
+experiments.
+
 Experimental layout of the SECONDARY application on GPT 2:
     /ventoy-secondary/EFI/BOOT/grubx64_real.efi
     /ventoy-secondary/grub/...
