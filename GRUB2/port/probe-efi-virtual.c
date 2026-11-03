@@ -33,6 +33,17 @@ vt_stage (EFI_SERIAL_IO_PROTOCOL *serial, const char *message, UINTN length)
   uefi_call_wrapper (serial->Write, 3, serial, &length, (VOID *)message);
 }
 
+static VOID
+vt_status (EFI_SERIAL_IO_PROTOCOL *serial, EFI_STATUS result)
+{
+  static const char alphabet[] = "0123456789abcdef";
+  char message[] = "VT_EFI_NEGATIVE_STATUS=0x0000000000000000\r\n";
+  UINTN i, bytes = sizeof (message) - 1;
+  for (i = 0; i < 16; ++i)
+    message[25 + i] = alphabet[((UINT64)result >> ((15 - i) * 4)) & 15U];
+  uefi_call_wrapper (serial->Write, 3, serial, &bytes, message);
+}
+
 static UINT64
 vt_load_le (const UINT8 *data, UINTN size)
 {
@@ -278,6 +289,7 @@ vt_probe_virtual_media (EFI_SYSTEM_TABLE *system,
                               published, media.media.MediaId, 0, 512, buffer);
   if (status != EFI_BAD_BUFFER_SIZE)
     {
+      vt_status (serial, status);
       vt_stage (serial, "VT_EFI_NEGATIVE_SIZE_FAILED\r\n",
                 sizeof ("VT_EFI_NEGATIVE_SIZE_FAILED\r\n") - 1);
       status = EFI_COMPROMISED_DATA;
