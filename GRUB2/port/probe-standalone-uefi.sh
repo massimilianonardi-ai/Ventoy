@@ -3,14 +3,19 @@
 # Uses only files under a newly created output directory; never a host disk.
 set -eu
 
-if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3]" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 4 ]; then
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE]" >&2
   exit 2
 fi
 
 module=$1
 output=$2
 source_fs=${3:-fat32}
+efi_probe=${4:-}
+if [ -n "$efi_probe" ] && [ ! -s "$efi_probe" ]; then
+  echo "Missing EFI diagnostic executable: $efi_probe" >&2
+  exit 4
+fi
 case "$source_fs" in
   fat32) expected_grub_fs='fs=fat'; min_extents=2; part_num=1 ;;
   ext4) expected_grub_fs='fs=ext2'; min_extents=1; part_num=1 ;;
@@ -66,6 +71,25 @@ vt_source_probe ($isopart)/vt-probe-image.iso
 echo VTOY_EXTENT_MAP_BEGIN
 vt_extent_probe ($isopart)/vt-map-image.iso
 echo VTOY_EXTENT_MAP_DONE
+EOF
+
+if [ -n "$efi_probe" ]; then
+  cat >> "$output/runtime.cfg" <<'EOF'
+echo VTOY_EFI_MEMORY_BRIDGE_START
+if [ -n "$vt_probe_chain_addr" ]; then
+  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size
+  if boot; then
+    echo VTOY_EFI_MEMORY_BRIDGE_RETURNED
+  else
+    echo VTOY_EFI_MEMORY_BRIDGE_FAILED
+  fi
+else
+  echo VTOY_EFI_MEMORY_BRIDGE_MISSING
+fi
+EOF
+fi
+
+cat >> "$output/runtime.cfg" <<'EOF'
 echo VTOY_NO_CORE_PROBE_COMPLETED
 halt
 EOF
@@ -74,7 +98,7 @@ grub-mkimage --format=x86_64-efi \
   --directory=/usr/lib/grub/x86_64-efi \
   --prefix=/grub --config="$output/bootstrap.cfg" \
   --output="$output/BOOTX64.EFI" \
-  part_gpt fat ext2 search search_fs_file serial terminal normal configfile test echo halt ls
+  part_gpt fat ext2 chainloader search search_fs_file serial terminal normal configfile test echo halt ls
 
 # Each target is an isolated NEW GPT image, not a host or loop device.
 for target in boot iso; do
@@ -110,6 +134,9 @@ done
 mmd -i "$output/boot-part.img" ::/EFI ::/EFI/BOOT ::/grub ::/grub/x86_64-efi
 mcopy -i "$output/boot-part.img" "$output/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$output/boot-part.img" "$module" ::/grub/x86_64-efi/ventoy_source_probe.mod
+if [ -n "$efi_probe" ]; then
+  mcopy -i "$output/boot-part.img" "$efi_probe" ::/EFI/BOOT/VTOYDIAG.EFI
+fi
 mcopy -i "$output/boot-part.img" "$output/runtime.cfg" ::/grub/runtime.cfg
 echo 'bootloader marker' > "$output/vt-probe-boot.marker"
 mcopy -i "$output/boot-part.img" "$output/vt-probe-boot.marker" ::/vt-probe-boot.marker
@@ -233,6 +260,15 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
     "$output/qemu.log" "$output/vt-map-image.iso" \
     "$output/iso-disk.img" "$output/iso-map-verification.txt" \
     "$min_extents" "$part_num"
+  if [ -n "$efi_probe" ]; then
+    if ! grep -q 'VT_EFI_MEMORY_HANDOFF_OK' "$output/qemu.log" ||
+       grep -q 'VTOY_EFI_MEMORY_BRIDGE_FAILED' "$output/qemu.log"; then
+      echo 'efi_memory_bridge=failed' >&2
+      tail -n 75 "$output/qemu.log" >&2
+      exit 8
+    fi
+    echo 'efi_memory_bridge=passed' >> "$output/runtime-result.txt"
+  fi
 else
   echo 'uefi_probe=failed' | tee "$output/runtime-result.txt"
   echo "QEMU exit $qemu_status; last serial output:" >&2
