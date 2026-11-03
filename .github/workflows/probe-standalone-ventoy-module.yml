@@ -10,6 +10,7 @@ on:
       - GRUB2/port/probe-handoff.c
       - GRUB2/port/probe-efi-app.c
       - GRUB2/port/probe-efi-blockmap.c
+      - GRUB2/port/probe-efi-virtual.c
       - GRUB2/port/build-efi-handoff-probe.sh
       - GRUB2/port/verify-extent-map.py
       - GRUB2/port/probe-standalone-module.sh
