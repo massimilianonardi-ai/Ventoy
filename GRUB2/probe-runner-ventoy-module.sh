@@ -24,6 +24,16 @@ cp -a "$source/." "$output/source/"
 cp -a "$overlay/grub-core/ventoy" "$output/source/grub-core/"
 cp "$overlay/include/grub/ventoy.h" "$output/source/include/grub/ventoy.h"
 
+# Explicit in-fork port patch, applied only to the runner-source copy.
+# The inherited 2.04 overlay remains unchanged for audit and comparison.
+patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
+    < "$(dirname "$0")/port/runner-efi-api.patch" \
+    > "$output/efi-port-apply.log" 2>&1 || {
+    echo "EFI API port patch did not apply to the distribution tree" >&2
+    cat "$output/efi-port-apply.log" >&2
+    exit 7
+}
+
 # Add only the Ventoy module definition, not 2.04's Makefile/core rewrites.
 cat >> "$output/source/grub-core/Makefile.core.def" <<'EOF'
 
@@ -49,7 +59,8 @@ EOF
 (
     cd "$output/source"
     ./autogen.sh > "$output/autogen.log" 2>&1
-    ./configure --with-platform=efi --target=x86_64 \
+    TARGET_CFLAGS="-Os -Wno-error=misleading-indentation" \
+      ./configure --with-platform=efi --target=x86_64 \
         --prefix="$output/stage" > "$output/configure.log" 2>&1
     make -C grub-core -j 4 ventoy.module > "$output/build.log" 2>&1
 ) || {
