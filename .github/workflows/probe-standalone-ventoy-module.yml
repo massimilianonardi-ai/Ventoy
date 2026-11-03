@@ -7,6 +7,7 @@ on:
       - .github/workflows/probe-standalone-ventoy-module.yml
       - GRUB2/port/probe-source.c
       - GRUB2/port/probe-standalone-module.sh
+      - GRUB2/port/probe-standalone-uefi.sh
   workflow_dispatch:
 
 permissions:
@@ -55,6 +56,15 @@ jobs:
             "$(cat "$RUNNER_TEMP/source-module-path")" \
             "$RUNNER_TEMP/standalone-source-probe"
 
+      - name: Boot the stock-GRUB module probe on two disposable UEFI disks
+        run: |
+          set -eu
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf mtools gdisk dosfstools
+          sh GRUB2/port/probe-standalone-uefi.sh \
+            "$RUNNER_TEMP/standalone-source-probe/source/grub-core/ventoy_source_probe.mod" \
+            "$RUNNER_TEMP/standalone-uefi-probe"
+
       - name: Upload module build evidence only (not a Ventoy release)
         if: always()
         uses: actions/upload-artifact@v4
@@ -66,5 +76,11 @@ jobs:
             ${{ runner.temp }}/standalone-source-probe/autogen.log
             ${{ runner.temp }}/standalone-source-probe/configure.log
             ${{ runner.temp }}/standalone-source-probe/build.log
+            ${{ runner.temp }}/standalone-uefi-probe/runtime-result.txt
+            ${{ runner.temp }}/standalone-uefi-probe/qemu.log
+            ${{ runner.temp }}/standalone-uefi-probe/boot-gpt.log
+            ${{ runner.temp }}/standalone-uefi-probe/boot-fat.log
+            ${{ runner.temp }}/standalone-uefi-probe/iso-gpt.log
+            ${{ runner.temp }}/standalone-uefi-probe/iso-fat.log
           retention-days: 30
           if-no-files-found: warn
