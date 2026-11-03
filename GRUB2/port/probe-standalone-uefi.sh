@@ -3,17 +3,23 @@
 # Uses only files under a newly created output directory; never a host disk.
 set -eu
 
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4]" >&2
   exit 2
 fi
 
 module=$1
 output=$2
+source_fs=${3:-fat32}
+case "$source_fs" in
+  fat32) expected_grub_fs='fs=fat'; min_extents=2 ;;
+  ext4) expected_grub_fs='fs=ext2'; min_extents=1 ;;
+  *) echo "Unsupported source filesystem: $source_fs" >&2; exit 2 ;;
+esac
 [ -s "$module" ] || { echo 'Nonempty compiled module required' >&2; exit 3; }
 [ ! -e "$output" ] || { echo 'Output directory already exists' >&2; exit 4; }
 
-for binary in grub-mkimage sgdisk mkfs.vfat mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 xorriso; do
+for binary in grub-mkimage sgdisk mkfs.vfat mkfs.ext4 mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 xorriso; do
   command -v "$binary" >/dev/null 2>&1 || {
     echo "Missing test dependency: $binary" >&2
     exit 5
@@ -67,7 +73,7 @@ grub-mkimage --format=x86_64-efi \
   --directory=/usr/lib/grub/x86_64-efi \
   --prefix=/grub --config="$output/bootstrap.cfg" \
   --output="$output/BOOTX64.EFI" \
-  part_gpt fat search search_fs_file serial terminal normal configfile test echo halt ls
+  part_gpt fat ext2 search search_fs_file serial terminal normal configfile test echo halt ls
 
 # Each target is an isolated NEW GPT image, not a host or loop device.
 for target in boot iso; do
@@ -81,7 +87,9 @@ for target in boot iso; do
   fi
   sgdisk --clear --new=1:2048:+64M --typecode="1:$type" "$disk" \
     > "$output/$target-gpt.log" 2>&1
-  mkfs.vfat -F 32 "$part" > "$output/$target-fat.log" 2>&1
+  if [ "$target" = boot ] || [ "$source_fs" = fat32 ]; then
+    mkfs.vfat -F 32 "$part" > "$output/$target-fat.log" 2>&1
+  fi
 done
 
 mmd -i "$output/boot-part.img" ::/EFI ::/EFI/BOOT ::/grub ::/grub/x86_64-efi
@@ -92,7 +100,6 @@ echo 'bootloader marker' > "$output/vt-probe-boot.marker"
 mcopy -i "$output/boot-part.img" "$output/vt-probe-boot.marker" ::/vt-probe-boot.marker
 
 echo 'source-location fixture, not a bootable ISO' > "$output/vt-probe-image.iso"
-mcopy -i "$output/iso-part.img" "$output/vt-probe-image.iso" ::/vt-probe-image.iso
 
 # Create a genuine ISO9660 filesystem with deterministic, nonuniform data.
 # The bytes are intentionally NOT a hand-written fake ISO header.
@@ -110,20 +117,31 @@ xorriso -as mkisofs -quiet -R -J -V VTOY_MAP_TEST \
 xorriso -indev "$output/vt-map-image.iso" -pvd_info \
   >> "$output/xorriso.log" 2>&1
 
-# Force noncontiguous FAT allocation: A, B, C; remove B, then put a
-# larger ISO across the free hole and later free clusters.
-truncate -s 1M "$output/filler-A.bin"
-truncate -s 1536K "$output/filler-B.bin"
-truncate -s 1M "$output/filler-C.bin"
-truncate -s 58M "$output/filler-D.bin"
-mcopy -i "$output/iso-part.img" "$output/filler-A.bin" ::/A.FILL
-mcopy -i "$output/iso-part.img" "$output/filler-B.bin" ::/B.FILL
-mcopy -i "$output/iso-part.img" "$output/filler-C.bin" ::/C.FILL
-# Fill the tail BEFORE freeing B, so neither of the remaining free
-# areas can contain the full ISO. The ISO must cross a physical gap.
-mcopy -i "$output/iso-part.img" "$output/filler-D.bin" ::/D.FILL
-mdel -i "$output/iso-part.img" ::/B.FILL
-mcopy -i "$output/iso-part.img" "$output/vt-map-image.iso" ::/vt-map-image.iso
+if [ "$source_fs" = fat32 ]; then
+  mcopy -i "$output/iso-part.img" "$output/vt-probe-image.iso" ::/vt-probe-image.iso
+
+  # Force noncontiguous FAT allocation before copying the real ISO.
+  truncate -s 1M "$output/filler-A.bin"
+  truncate -s 1536K "$output/filler-B.bin"
+  truncate -s 1M "$output/filler-C.bin"
+  truncate -s 58M "$output/filler-D.bin"
+  mcopy -i "$output/iso-part.img" "$output/filler-A.bin" ::/A.FILL
+  mcopy -i "$output/iso-part.img" "$output/filler-B.bin" ::/B.FILL
+  mcopy -i "$output/iso-part.img" "$output/filler-C.bin" ::/C.FILL
+  # Fill the tail BEFORE freeing B; force an ISO crossing a physical gap.
+  mcopy -i "$output/iso-part.img" "$output/filler-D.bin" ::/D.FILL
+  mdel -i "$output/iso-part.img" ::/B.FILL
+  mcopy -i "$output/iso-part.img" "$output/vt-map-image.iso" ::/vt-map-image.iso
+else
+  # Rootless ext4 image population. The disk is an ordinary file, never
+  # a loop-mounted host device. This checks the same module on m-boot's
+  # selected data filesystem, without claiming ext4 fragmentation.
+  mkdir "$output/ext4-content"
+  cp "$output/vt-map-image.iso" "$output/ext4-content/vt-map-image.iso"
+  cp "$output/vt-probe-image.iso" "$output/ext4-content/vt-probe-image.iso"
+  mkfs.ext4 -F -b 4096 -d "$output/ext4-content" "$output/iso-part.img" \
+    > "$output/iso-ext4.log" 2>&1
+fi
 
 for target in boot iso; do
   dd if="$output/$target-part.img" of="$output/$target-disk.img" \
@@ -145,12 +163,13 @@ qemu_status=$?
 set -e
 
 if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
+   grep -q 'VT_CHAIN_SUCCESS' "$output/qemu.log" &&
    grep -q 'VT_MAP_SUCCESS' "$output/qemu.log" &&
    grep -q 'VTOY_NO_CORE_PROBE_COMPLETED' "$output/qemu.log" &&
    grep -q 'VTOY_BOOT_DEVICE=hd0,gpt1' "$output/qemu.log" &&
    grep -q 'VTOY_ISO_DEVICE=hd1,gpt1' "$output/qemu.log" &&
    grep -q 'source=(hd1,gpt1)/vt-probe-image.iso disk=hd1 partition=1' "$output/qemu.log" &&
-   grep -q 'fs=fat' "$output/qemu.log" &&
+   grep -q "$expected_grub_fs" "$output/qemu.log" &&
    grep -q 'bytes=44' "$output/qemu.log" &&
    ! grep -q 'error: ' "$output/qemu.log"; then
   {
@@ -162,7 +181,8 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
   } | tee "$output/runtime-result.txt"
   python3 "$(dirname "$0")/verify-extent-map.py" \
     "$output/qemu.log" "$output/vt-map-image.iso" \
-    "$output/iso-disk.img" "$output/iso-map-verification.txt"
+    "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+    "$min_extents"
 else
   echo 'uefi_probe=failed' | tee "$output/runtime-result.txt"
   echo "QEMU exit $qemu_status; last serial output:" >&2
