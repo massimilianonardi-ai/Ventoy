@@ -60,6 +60,7 @@ static grub_env_set_pf grub_env_set = NULL;
  * A successful probe does not install CD BlockIo or boot an ISO. */
 STATIC BOOLEAN gMbootSourceProbe = FALSE;
 STATIC BOOLEAN gMbootMediaProbe = FALSE;
+STATIC BOOLEAN gMbootBootProbe = FALSE;
 STATIC UINT8 gMbootSourceGuid[16];
 STATIC UINTN gMbootChainBytes = 0;
 
@@ -781,6 +782,48 @@ done:
     return Status;
 }
 
+/* This is the ORIGINAL EFI boot entrypoint used by the default path.
+ * The optional branch calls it only after independently proving the
+ * source and successfully publishing its own original BlockIo.
+ */
+EFI_STATUS EFIAPI ventoy_boot(IN EFI_HANDLE ImageHandle);
+
+/* In the optional boot probe the original Ventoy ISO9660 filesystem driver
+ * must be loaded from m-boot's separate ESP, NOT an arbitrary source
+ * partition (which can be ext4 and have no EFI filesystem at all).
+ * Retain and report the actual firmware LoadImage/StartImage statuses.
+ */
+STATIC EFI_STATUS ventoy_probe_secondary_iso_driver(IN EFI_HANDLE ImageHandle)
+{
+    EFI_STATUS Status;
+    EFI_LOADED_IMAGE_PROTOCOL *Loaded = NULL;
+    EFI_DEVICE_PATH_PROTOCOL *Path = NULL;
+    EFI_HANDLE Driver = NULL;
+
+    Status = gBS->HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid,
+                                 (VOID **)&Loaded);
+    if (EFI_ERROR(Status) || !Loaded)
+    {
+        return EFI_NOT_FOUND;
+    }
+    Status = gBS->HandleProtocol(Loaded->DeviceHandle,
+                                 &gEfiDevicePathProtocolGuid,
+                                 (VOID **)&Path);
+    if (EFI_ERROR(Status) || !Path)
+    {
+        return EFI_NOT_FOUND;
+    }
+    Status = ventoy_load_image(ImageHandle, Path,
+                               gMbootIso9660EfiDriverPath,
+                               sizeof(gMbootIso9660EfiDriverPath), &Driver);
+    if (EFI_ERROR(Status) || !Driver)
+    {
+        return EFI_NOT_FOUND;
+    }
+    gBlockData.IsoDriverImage = Driver;
+    return gBS->StartImage(Driver, NULL, NULL);
+}
+
 /* Exercise Ventoy's OWN production virtual BlockIo callbacks against
  * the independently selected whole GPT disk. In this opt-in mode no
  * installer starts. Validate the entire published CD payload against an
@@ -872,6 +915,12 @@ STATIC EFI_STATUS ventoy_probe_secondary_media(IN EFI_HANDLE ImageHandle)
     Result[8] = 0;
     grub_env_set("vt_original_virtual_crc32", Result);
     Status = EFI_SUCCESS;
+    if (gMbootBootProbe)
+    {
+        Status = ventoy_boot(ImageHandle);
+        grub_env_set("vt_original_boot_probe",
+                     EFI_ERROR(Status) ? "failed" : "returned");
+    }
 
 cleanup:
     if (Allocation)
@@ -893,6 +942,15 @@ cleanup:
         else
         {
             grub_env_set("vt_original_virtual_uninstalled", "yes");
+        }
+    }
+    if (gBlockData.IsoDriverImage)
+    {
+        CleanupStatus = gBS->UnloadImage(gBlockData.IsoDriverImage);
+        gBlockData.IsoDriverImage = NULL;
+        if (EFI_ERROR(CleanupStatus) && !EFI_ERROR(Status))
+        {
+            Status = CleanupStatus;
         }
     }
     if (gBlockData.Path)
@@ -1327,9 +1385,12 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
     /* Only the explicitly opted-in diagnostic uses secondary GPT identity.
      * The upstream Ventoy device-check result is still required above. */
     if (StrStr(pCmdLine, L"mboot_source_probe=1") ||
-        StrStr(pCmdLine, L"mboot_media_probe=1"))
+        StrStr(pCmdLine, L"mboot_media_probe=1") ||
+        StrStr(pCmdLine, L"mboot_boot_probe=1"))
     {
-        gMbootMediaProbe = StrStr(pCmdLine, L"mboot_media_probe=1") != NULL;
+        gMbootBootProbe = StrStr(pCmdLine, L"mboot_boot_probe=1") != NULL;
+        gMbootMediaProbe = gMbootBootProbe ||
+                            StrStr(pCmdLine, L"mboot_media_probe=1") != NULL;
         const char *Mode = grub_env_get("VTOY_MBOOT_SECONDARY");
         if (!Mode || Mode[0] != '1' || Mode[1] != 0)
         {
@@ -1688,7 +1749,16 @@ EFI_STATUS EFIAPI VentoyEfiMain
                      EFI_ERROR(Status) ? "rejected" : "selected");
         if (!EFI_ERROR(Status) && gMbootMediaProbe)
         {
-            Status = ventoy_probe_secondary_media(ImageHandle);
+            if (gMbootBootProbe)
+            {
+                Status = ventoy_probe_secondary_iso_driver(ImageHandle);
+                grub_env_set("vt_original_iso_driver",
+                             EFI_ERROR(Status) ? "failed" : "started");
+            }
+            if (!EFI_ERROR(Status))
+            {
+                Status = ventoy_probe_secondary_media(ImageHandle);
+            }
             grub_env_set("vt_original_media_probe",
                          EFI_ERROR(Status) ? "rejected" : "verified");
         }
