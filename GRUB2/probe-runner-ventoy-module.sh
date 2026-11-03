@@ -42,6 +42,14 @@ patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
     exit 9
 }
 
+patch --batch --fuzz=0 --forward -p1 -d "$output/source" \
+    < "$(dirname "$0")/port/runner-file-api.patch" \
+    > "$output/file-port-apply.log" 2>&1 || {
+    echo "File API port patch did not apply" >&2
+    cat "$output/file-port-apply.log" >&2
+    exit 10
+}
+
 # Ventoy's former GRUB core owns these policy variables. Restore their
 # definitions in the runner-source core; do not invent module-local stubs.
 if grep -q 'g_sys_sb' "$output/source/grub-core/kern/env.c"
