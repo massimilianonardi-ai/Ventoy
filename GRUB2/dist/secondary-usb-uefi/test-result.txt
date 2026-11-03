@@ -1,0 +1,2 @@
+synthetic_ext4_gpt_source_efi_startimage=passed
+proxmox_actual_installer=not-tested

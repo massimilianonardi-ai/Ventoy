@@ -1,0 +1,9 @@
+fixture=m-boot-experimental-x86_64-uefi-usb-iso
+architecture=x86_64-efi
+source_iso_guest_path=/m/boot/iso/proxmox-ve_9.2-1.iso
+source_iso=external-GPT-disk-read-only
+native_arm64_efi_tested=no
+physical_usb_writes=not-permitted-by-test
+grub_core_patched=no
+original_ventoy_source=experimental-branch
+build_source_revision=79afbdec26d3b8032dce3896d4189c96d88319dd
