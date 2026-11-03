@@ -53,33 +53,41 @@ Implemented source adaptations on the experimental branch
 
 Safe test sequence (not yet executed)
 -------------------------------------
-1. Build the fork's GRUB 2.04 sources with the modified Ventoy module and
-   VENTOY_GRUB_PREFIX configured above. Follow the upstream source-build
-   requirements in DOC/BuildVentoyFromSource.txt; standard copied upstream
-   binaries do not contain this patch or embedded prefix.
-2. Build the modified EDK2 Ventoy UEFI application as well. The unmodified
-   ventoy_x64.efi binary does not contain the relocated ISO driver paths.
-3. Extract the complete Ventoy EFI filesystem resources from the built
-   distribution and stage them under /ventoy-secondary/ in the *disposable
-   QEMU disk* (not a physical USB). Preserve the original m-boot fallback
-   binary and menu. Ensure all GRUB modules and assets come from the
-   *same Ventoy build*, not m-boot's GRUB 2.12.
-4. With Secure Boot disabled in OVMF for the initial proof, chainload
-   /ventoy-secondary/EFI/BOOT/grubx64_real.efi directly from m-loader.
-   This intentionally bypasses shim only in the disposable test; Secure
-   Boot support has not been integrated.
-5. Verify in order: secondary GRUB initialization, m-boot GPT detection,
-   ISO enumeration on MBOOTDATA, UEFI chainloading of a selected ISO,
-   and post-kernel discovery/mount of the installation medium.
-6. Run corresponding regression checks on a disposable *standard* Ventoy
-   GPT image to ensure its existing layout check is preserved. The operator's
-   already successful original-Ventoy boot does not validate this changed
-   fork revision.
+1. Run .github/workflows/probe-secondary-grub.yml on the named
+   ubuntu-24.04 GitHub runner. It records the actual distribution GRUB
+   packages and verifies a stock GRUB EFI baseline; it does NOT compile
+   or release Ventoy. The discovered versions are provenance, not pins.
+2. Port Ventoy's GRUB core modifications and custom ventoy module to the
+   GRUB source corresponding to those installed runner packages, then
+   rebuild all affected GRUB components and grub-mkimage from matching
+   sources. Build the secondary GRUB image with
+   VENTOY_GRUB_PREFIX='(,2)/ventoy-secondary/grub'.
+   The original GRUB2/buildgrub.sh and GRUB2/MOD_SRC/grub-2.04/ remain
+   legacy upstream reference, NOT the chosen secondary release route.
+   This port is not implemented or compile-tested yet.
+3. Build the modified EDK2 Ventoy UEFI application too. Unmodified
+   ventoy_x64.efi does not contain the relocated ISO driver paths.
+4. Extract matching Ventoy filesystem resources from the rebuilt components
+   and stage them under /ventoy-secondary/ on a disposable QEMU disk only.
+   Do not overwrite m-boot's EFI fallback or its loader. All GRUB modules
+   must match the custom-built Ventoy GRUB, never be mixed with stock
+   distribution modules or m-boot GRUB modules.
+5. With Secure Boot disabled in OVMF, chainload
+   /ventoy-secondary/EFI/BOOT/grubx64_real.efi from m-loader.
+6. Verify secondary GRUB initialization, m-boot GPT detection, ISO
+   enumeration on MBOOTDATA, UEFI ISO chainload, and kernel/live-root mount.
+7. Regression-test the modified fork with a disposable standard Ventoy GPT
+   layout; do not repeat the already successful upstream ISO baseline.
 
 Known limits / do not claim yet
 -------------------------------
-- No successful compiler/build run, OVMF run, kernel handoff, ARM64 boot,
-  Secure Boot chain or physical USB test has been obtained for this branch.
+- No successful custom Ventoy GRUB compilation/build, OVMF run, kernel
+  handoff, ARM64 boot, Secure Boot chain or physical USB test has been
+  obtained for this branch. A stock-runner GRUB probe is not such a build.
+- GRUB 2.04 is no longer the chosen build/release version; the old Ventoy
+  overlay cannot be linked with current Ubuntu GRUB without a source port.
+  Use a named runner OS image, not ubuntu-latest, and record actual package
+  versions and source provenance for every future release.
 - Upstream distribution packaging creates a VTOYEFI image at the standard
   partition-root layout; a separate staging/export procedure will be needed
   for the nested m-boot path. It does not appear automatically after build.
