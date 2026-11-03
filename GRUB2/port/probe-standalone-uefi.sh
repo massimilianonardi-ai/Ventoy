@@ -3,8 +3,8 @@
 # Uses only files under a newly created output directory; never a host disk.
 set -eu
 
-if [ "$#" -lt 2 ] || [ "$#" -gt 4 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE]" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 5 ]; then
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original]]" >&2
   exit 2
 fi
 
@@ -12,6 +12,12 @@ module=$1
 output=$2
 source_fs=${3:-fat32}
 efi_probe=${4:-}
+efi_mode=${5:-diagnostic}
+case "$efi_mode" in
+  diagnostic) ;;
+  original) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
+  *) echo "Unknown EFI mode: $efi_mode" >&2; exit 2 ;;
+esac
 if [ -n "$efi_probe" ] && [ ! -s "$efi_probe" ]; then
   echo "Missing EFI diagnostic executable: $efi_probe" >&2
   exit 4
@@ -73,7 +79,23 @@ vt_extent_probe ($isopart)/vt-map-image.iso
 echo VTOY_EXTENT_MAP_DONE
 EOF
 
-if [ -n "$efi_probe" ]; then
+if [ -n "$efi_probe" ] && [ "$efi_mode" = original ]; then
+  cat >> "$output/runtime.cfg" <<'EOF'
+echo VTOY_ORIGINAL_EFI_BEGIN
+if [ -n "$vt_probe_chain_addr" ]; then
+  set VTOY_MBOOT_SECONDARY=1
+  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size gptguid:$vt_probe_gpt_guid env_param=$vt_probe_env_addr mboot_source_probe=1
+  if boot; then
+    echo VTOY_ORIGINAL_EFI_RETURNED
+  else
+    echo VTOY_ORIGINAL_EFI_FAILED
+  fi
+  echo VTOY_ORIGINAL_SOURCE_STATUS=$vt_original_source_probe
+else
+  echo VTOY_ORIGINAL_EFI_MISSING
+fi
+EOF
+elif [ -n "$efi_probe" ]; then
   cat >> "$output/runtime.cfg" <<'EOF'
 echo VTOY_EFI_MEMORY_BRIDGE_START
 if [ -n "$vt_probe_chain_addr" ]; then
@@ -283,11 +305,28 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
     echo "qemu_exit=$qemu_status"
   } | tee "$output/runtime-result.txt"
   if [ -n "$efi_probe" ]; then
-    python3 "$(dirname "$0")/verify-extent-map.py" \
-      "$output/qemu.log" "$output/vt-map-image.iso" \
-      "$output/iso-disk.img" "$output/iso-map-verification.txt" \
-      "$min_extents" "$part_num" efi
-    if ! grep -q 'VT_EFI_ORIGINAL_ENV_PARAM_GET_SET_OK' "$output/qemu.log" ||
+    if [ "$efi_mode" = original ]; then
+      python3 "$(dirname "$0")/verify-extent-map.py" \
+        "$output/qemu.log" "$output/vt-map-image.iso" \
+        "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+        "$min_extents" "$part_num"
+      if ! grep -q 'VTOY_ORIGINAL_EFI_RETURNED' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_SOURCE_STATUS=selected' "$output/qemu.log" ||
+         grep -q 'VTOY_ORIGINAL_EFI_FAILED' "$output/qemu.log"; then
+        echo 'original_efi_source_probe=failed' >&2
+        tail -n 95 "$output/qemu.log" >&2
+        exit 8
+      fi
+      echo 'original_ventoy_efi_app_executed=passed' >> "$output/runtime-result.txt"
+      echo 'original_efi_source_gpt_guid_crc=verified' >> "$output/runtime-result.txt"
+      echo 'original_efi_legacy_mbr_collision=resolved' >> "$output/runtime-result.txt"
+      echo 'original_efi_virtual_cd_boot=not-tested' >> "$output/runtime-result.txt"
+    else
+      python3 "$(dirname "$0")/verify-extent-map.py" \
+        "$output/qemu.log" "$output/vt-map-image.iso" \
+        "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+        "$min_extents" "$part_num" efi
+      if ! grep -q 'VT_EFI_ORIGINAL_ENV_PARAM_GET_SET_OK' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_GPT_DISK_SELECTED' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_MEMORY_HANDOFF_OK' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_BLOCKMAP_OK crc32=' "$output/qemu.log" ||
@@ -305,6 +344,7 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
     echo 'efi_blockio_full_iso_crc32=verified' >> "$output/runtime-result.txt"
     echo 'efi_virtual_blockio_crc32=verified' >> "$output/runtime-result.txt"
     echo 'efi_virtual_blockio_uninstalled=verified' >> "$output/runtime-result.txt"
+    fi
   else
     python3 "$(dirname "$0")/verify-extent-map.py" \
       "$output/qemu.log" "$output/vt-map-image.iso" \
