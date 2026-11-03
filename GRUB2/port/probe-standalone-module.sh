@@ -22,6 +22,7 @@ mkdir "$output/source"
 cp -a "$source/." "$output/source/"
 mkdir -p "$output/source/grub-core/ventoy"
 cp "$here/probe-source.c" "$output/source/grub-core/ventoy/source_probe.c"
+cp "$here/probe-extents.c" "$output/source/grub-core/ventoy/extent_probe.c"
 
 cat >> "$output/source/grub-core/Makefile.core.def" <<'EOF'
 
@@ -29,6 +30,7 @@ cat >> "$output/source/grub-core/Makefile.core.def" <<'EOF'
 module = {
   name = ventoy_source_probe;
   common = ventoy/source_probe.c;
+  common = ventoy/extent_probe.c;
 };
 EOF
 
