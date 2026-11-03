@@ -28,7 +28,7 @@ typedef struct
 } VT_VIRTUAL_MEDIA;
 
 static VOID
-vt_stage (EFI_SERIAL_IO_PROTOCOL *serial, const CHAR8 *message, UINTN length)
+vt_stage (EFI_SERIAL_IO_PROTOCOL *serial, const char *message, UINTN length)
 {
   uefi_call_wrapper (serial->Write, 3, serial, &length, (VOID *)message);
 }
