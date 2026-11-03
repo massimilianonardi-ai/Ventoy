@@ -127,7 +127,7 @@ def main():
     # the GRUB module's byte-level diagnostic dump. Compare legacy disk
     # identifiers with the REAL whole-disk MBR, not an invented device ID.
     handoff = re.search(
-        r"VT_HANDOFF head=(\\d+) bytes=(\\d+) offset=(\\d+) count=(\\d+)",
+        r"VT_HANDOFF head=(\d+) bytes=(\d+) offset=(\d+) count=(\d+)",
         serial
     )
     checked(handoff is not None, "missing native Ventoy chain header")
@@ -142,7 +142,7 @@ def main():
     serialized = [
         (int(n), bytes.fromhex(payload))
         for n, payload in re.findall(
-            r"VT_OS_BYTES i=(\\d+) hex=([0-9a-f]{32})", serial
+            r"VT_OS_BYTES i=(\d+) hex=([0-9a-f]{32})", serial
         )
     ]
     checked(len(serialized) == 32 and
@@ -160,11 +160,11 @@ def main():
             "wrong backing GPT partition index")
     checked(struct.unpack_from("<H", os_param, 43)[0] in (2, 5),
             "unexpected Ventoy source FS type")
-    checked(os_param[45:429].split(b"\\0", 1)[0] == b"/vt-map-image.iso",
+    checked(os_param[45:429].split(b"\0", 1)[0] == b"/vt-map-image.iso",
             "Ventoy os_param lost actual ISO path")
     checked(struct.unpack_from("<Q", os_param, 429)[0] == expected_size,
             "Ventoy os_param image size mismatch")
-    checked(os_param[437:449] == b"\\0" * 12
+    checked(os_param[437:449] == b"\0" * 12
             and os_param[451] == 0 and os_param[455] == 0,
             "unsupported memory pointer, chain type or VLNK flag")
 
