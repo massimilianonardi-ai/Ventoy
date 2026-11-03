@@ -114,7 +114,8 @@ if grep -q 'VTOY_NO_CORE_PROBE_COMPLETED' "$output/qemu.log" &&
    grep -q 'VTOY_BOOT_DEVICE=hd0,gpt1' "$output/qemu.log" &&
    grep -q 'VTOY_ISO_DEVICE=hd1,gpt1' "$output/qemu.log" &&
    grep -q 'source=(hd1,gpt1)/vt-probe-image.iso disk=hd1 partition=1' "$output/qemu.log" &&
-   grep -q 'fs=fat bytes=' "$output/qemu.log" &&
+   grep -q 'fs=fat' "$output/qemu.log" &&
+   grep -q 'bytes=44' "$output/qemu.log" &&
    ! grep -q 'error: ' "$output/qemu.log"; then
   {
     echo 'uefi_probe=passed'
