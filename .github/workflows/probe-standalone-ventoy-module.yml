@@ -92,6 +92,7 @@ jobs:
             ${{ runner.temp }}/standalone-uefi-ext4-probe/runtime-result.txt
             ${{ runner.temp }}/standalone-uefi-ext4-probe/iso-map-verification.txt
             ${{ runner.temp }}/standalone-uefi-ext4-probe/iso-ext4.log
+            ${{ runner.temp }}/standalone-uefi-ext4-probe/iso-ext4-extents.log
             ${{ runner.temp }}/standalone-uefi-ext4-probe/qemu.log
           retention-days: 30
           if-no-files-found: warn
