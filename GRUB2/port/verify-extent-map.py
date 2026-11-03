@@ -18,14 +18,14 @@ def checked(condition, description):
         raise ValueError(description)
 
 
-def gpt_first_partition_range(disk):
+def gpt_partition_range(disk, part_number):
     disk.seek(512)
     header = disk.read(92)
     checked(header[:8] == b"EFI PART", "invalid GPT header")
     table_lba = struct.unpack_from("<Q", header, 72)[0]
     entry_size = struct.unpack_from("<I", header, 84)[0]
     checked(128 <= entry_size <= 4096, "invalid GPT entry size")
-    disk.seek(table_lba * 512)
+    disk.seek(table_lba * 512 + (part_number - 1) * entry_size)
     entry = disk.read(entry_size)
     checked(any(entry[:16]), "missing GPT partition")
     first, last = struct.unpack_from("<QQ", entry, 32)
@@ -34,14 +34,16 @@ def gpt_first_partition_range(disk):
 
 
 def main():
-    checked(len(sys.argv) in (5, 6),
+    checked(len(sys.argv) in (5, 6, 7),
             "usage: verify-extent-map.py QEMU-LOG ISO RAW-GPT-DISK REPORT "
-            "[MIN-EXTENTS]")
+            "[MIN-EXTENTS [PARTITION-NUMBER]]")
     log, iso_path, disk_path, report_path = (
         Path(x) for x in sys.argv[1:5]
     )
-    min_extents = int(sys.argv[5]) if len(sys.argv) == 6 else 2
+    min_extents = int(sys.argv[5]) if len(sys.argv) >= 6 else 2
+    part_num = int(sys.argv[6]) if len(sys.argv) == 7 else 1
     checked(1 <= min_extents <= 16384, "invalid minimum extent count")
+    checked(1 <= part_num <= 128, "invalid GPT partition number")
 
     serial = log.read_text(errors="replace")
     serial = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", serial)
@@ -50,7 +52,8 @@ def main():
     checked("VT_MAP_SUCCESS" in serial, "GRUB did not finish extent mapping")
     checked("VT_MAP_ERROR" not in serial, "GRUB printed a mapping error")
     header = re.search(
-        r"VT_MAP_HEADER image_bytes=(\d+) count=(\d+) disk=hd1 part=1", serial
+        rf"VT_MAP_HEADER image_bytes=(\d+) count=(\d+) "
+        rf"disk=hd1 part={part_num}", serial
     )
     checked(header is not None, "no cross-disk extent-map header")
     expected_size, expected_count = map(int, header.groups())
@@ -156,7 +159,7 @@ def main():
             "unexpected original Ventoy GUID")
     checked(struct.unpack_from("<Q", os_param, 33)[0] ==
             disk_path.stat().st_size, "wrong real backing-disk size")
-    checked(struct.unpack_from("<H", os_param, 41)[0] == 1,
+    checked(struct.unpack_from("<H", os_param, 41)[0] == part_num,
             "wrong backing GPT partition index")
     checked(struct.unpack_from("<H", os_param, 43)[0] in (2, 5),
             "unexpected Ventoy source FS type")
@@ -188,7 +191,7 @@ def main():
     with iso_path.open("rb") as image, disk_path.open("rb") as disk:
         image.seek(32769)
         checked(image.read(5) == b"CD001", "input is not an ISO9660 image")
-        partition_start, partition_end = gpt_first_partition_range(disk)
+        partition_start, partition_end = gpt_partition_range(disk, part_num)
         disk.seek(0, 2)
         disk_bytes = disk.tell()
 
@@ -237,7 +240,7 @@ def main():
         "ventoy_os_param_abi=verified\n"
         "ventoy_chain_head_abi=verified\n"
         "ventoy_image_location_abi=verified\n"
-        "source_disk=hd1,gpt1\n"
+        f"source_disk=hd1,gpt{part_num}\n"
         f"image_bytes={image_bytes}\n"
         f"extent_count={len(records)}\n"
         f"physical_discontinuities={discontinuities}\n"
