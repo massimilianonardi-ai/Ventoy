@@ -8,6 +8,8 @@ on:
       - GRUB2/port/probe-source.c
       - GRUB2/port/probe-extents.c
       - GRUB2/port/probe-handoff.c
+      - GRUB2/port/probe-efi-app.c
+      - GRUB2/port/build-efi-handoff-probe.sh
       - GRUB2/port/verify-extent-map.py
       - GRUB2/port/probe-standalone-module.sh
       - GRUB2/port/probe-standalone-uefi.sh
@@ -59,6 +61,12 @@ jobs:
             "$(cat "$RUNNER_TEMP/source-module-path")" \
             "$RUNNER_TEMP/standalone-source-probe"
 
+      - name: Build a disposable EFI LoadOptions consumer
+        run: |
+          set -eu
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnu-efi
+          sh GRUB2/port/build-efi-handoff-probe.sh "$RUNNER_TEMP/standalone-efi-consumer"
+
       - name: Boot the stock-GRUB module probe on two disposable UEFI disks
         run: |
           set -eu
@@ -72,7 +80,8 @@ jobs:
             "$RUNNER_TEMP/standalone-uefi-ext4-probe" ext4
           sh GRUB2/port/probe-standalone-uefi.sh \
             "$RUNNER_TEMP/standalone-source-probe/source/grub-core/ventoy_source_probe.mod" \
-            "$RUNNER_TEMP/standalone-uefi-gpt3-probe" ext4-gpt3
+            "$RUNNER_TEMP/standalone-uefi-gpt3-probe" ext4-gpt3 \
+            "$RUNNER_TEMP/standalone-efi-consumer/VTOYDIAG.EFI"
 
       - name: Upload module build evidence only (not a Ventoy release)
         if: always()
@@ -102,6 +111,9 @@ jobs:
             ${{ runner.temp }}/standalone-uefi-gpt3-probe/iso-ext4-extents.log
             ${{ runner.temp }}/standalone-uefi-gpt3-probe/qemu.log
             ${{ runner.temp }}/standalone-uefi-gpt3-probe/iso-gpt.log
+            ${{ runner.temp }}/standalone-efi-consumer/provenance.txt
+            ${{ runner.temp }}/standalone-efi-consumer/build.log
+            ${{ runner.temp }}/standalone-efi-consumer/efi-file.txt
             ${{ runner.temp }}/standalone-uefi-ext4-probe/qemu.log
           retention-days: 30
           if-no-files-found: warn
