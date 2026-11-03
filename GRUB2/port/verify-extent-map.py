@@ -72,7 +72,7 @@ def main():
     # ventoy_img_chunk and ventoy_image_disk_region in upstream ventoy.h.
     chain_head = re.search(
         r"VT_CHAIN_HEADER count=(\d+) image_sector=(\d+) "
-        r"disk_sector=(\\d+)", serial
+        r"disk_sector=(\d+)", serial
     )
     chain_end = re.search(
         r"VT_CHAIN_SUCCESS count=(\d+) image_bytes=(\d+)", serial
@@ -92,7 +92,7 @@ def main():
         tuple(map(int, row))
         for row in re.findall(
             r"VT_CHAIN_CHUNK i=(\d+) is=(\d+) ie=(\d+) "
-            r"ds=(\\d+) de=(\\d+)", serial
+            r"ds=(\d+) de=(\d+)", serial
         )
     ]
     regions = [
