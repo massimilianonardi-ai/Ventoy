@@ -470,3 +470,33 @@ Operator USB / Proxmox experimental boot probe (not a release):
   and installer. ISO rediscovery after kernel handoff is a separate
   acceptance property; no end-to-end installer success is inferred
   from a synthetic EFI probe, successful build or firmware entry.
+
+Operator Proxmox EFI-to-Linux transition and TrueNAS comparison:
+- On the physical MBOOTDATA ext4 USB passed through an isolated qcow2
+  backing to QEMU x86_64 EFI, the operator log shows real stock GRUB
+  locating `/m/boot/iso/proxmox-ve_9.2-1.iso` on hd1,gpt3 and fully
+  mapping 1,706,178,560 bytes in 120 independently enumerated extents.
+  The log ends after VT_USB_VENTOY_START; it does not by itself capture
+  EFI StartImage status or a returned EFI program.
+- The operator separately observed the Proxmox installer initramfs
+  searching for a block device with its ISO ID. That message is emitted
+  by the Linux-side installer-media lookup after entering the OS boot
+  path. It confirms the source-ISO identity check is not satisfied; it
+  is NOT a GRUB file-not-found error or a source extent-map failure.
+- This experimental secondary EFI path authenticates GPT/ISO, publishes
+  the original Ventoy UEFI BlockIo and StartImages the ISO bootloader;
+  however, it does not install an initramfs-side ISO remapping mechanism.
+  Boot Services virtual-CD BlockIo cannot be assumed to survive
+  ExitBootServices as a Linux-visible CDROM. Simply selecting another
+  ISO may repeat that limitation. TrueNAS SCALE's installer likewise
+  needs post-kernel source media recovery (e.g. its mount-cd search).
+- The experimental Ubuntu host runner and publication accept ONLY the
+  already observed filenames proxmox-ve_9.2-1.iso and
+  TrueNAS-SCALE-25.10.7.iso, and verify that the selected boot image
+  manifest references the exact chosen guest pathname. Neither variant
+  modifies or copies the operator's ISO, USB or m-boot product.
+- TrueNAS variant QEMU CI uses a synthetic EFI El Torito ISO stored
+  under the TrueNAS filename for file-selection and authentic StartImage
+  proof; it does not validate the real TrueNAS installer, linux
+  initramfs, live-root or full installation. Future operator observation
+  must distinguish reaching EFI, kernel, initramfs and installer.
