@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   original-efi-build:
@@ -193,6 +193,106 @@ jobs:
             echo 'original_efi_iso_bootloader=StartImage_probe'
             echo 'installer_boot=not-tested'
           } | tee "$RUNNER_TEMP/ventoy-original-edk2/runtime-result.txt"
+
+      - name: Build and prove isolated external-GPT-source USB boot image
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n GRUB2/port/prepare-usb-iso-boot-disk.sh
+          bundle="$RUNNER_TEMP/mboot-usb-boot"
+          bash GRUB2/port/prepare-usb-iso-boot-disk.sh \
+            "$RUNNER_TEMP/original-efi-grub-module/source/grub-core/ventoy_source_probe.mod" \
+            "$RUNNER_TEMP/ventoy-original-edk2/Ventoy-original-X64.EFI" \
+            "$GITHUB_WORKSPACE/INSTALL/ventoy/iso9660_x64.efi" \
+            "$bundle" /m/boot/iso/proxmox-ve_9.2-1.iso
+          ( cd "$bundle" && sha256sum -c SHA256SUMS )
+          # A genuine bootable EFI ISO from the existing original Ventoy test.
+          # Extend it beyond 16 MiB to exercise the separate large-ISO PVD
+          # branch, without pretending this synthetic input is Proxmox.
+          mkdir -p "$RUNNER_TEMP/usb-source-tree/m/boot/iso"
+          cp "$RUNNER_TEMP/ventoy-original-edk2/original-iso-boot/vt-map-image.iso" \
+            "$RUNNER_TEMP/usb-source-tree/m/boot/iso/proxmox-ve_9.2-1.iso"
+          truncate -s 18M \
+            "$RUNNER_TEMP/usb-source-tree/m/boot/iso/proxmox-ve_9.2-1.iso"
+          usb="$RUNNER_TEMP/usb-source-gpt.raw"
+          part="$RUNNER_TEMP/usb-source-ext4.img"
+          truncate -s 160M "$usb"
+          sgdisk --clear --new=1:2048:+8M --typecode=1:ef00 \
+            --new=2:0:+8M --typecode=2:ef00 \
+            --new=3:0:+96M --typecode=3:8300 "$usb" > "$bundle/usb-gpt.log"
+          sgdisk --verify "$usb" >> "$bundle/usb-gpt.log"
+          first=$(sgdisk --info=3 "$usb" | awk '/First sector:/{print $3}')
+          last=$(sgdisk --info=3 "$usb" | awk '/Last sector:/{print $3}')
+          test "$first" -ge 2048 && test "$last" -gt "$first"
+          bytes=$(( (last-first+1) * 512 ))
+          truncate -s "$bytes" "$part"
+          mkfs.ext4 -F -q -d "$RUNNER_TEMP/usb-source-tree" "$part"
+          dd if="$part" of="$usb" bs=512 seek="$first" conv=notrunc status=none
+          sgdisk --verify "$usb" >> "$bundle/usb-gpt.log"
+          ovmf_code=/usr/share/OVMF/OVMF_CODE_4M.fd
+          ovmf_vars=/usr/share/OVMF/OVMF_VARS_4M.fd
+          test -s "$ovmf_code" && test -s "$ovmf_vars"
+          cp "$ovmf_vars" "$bundle/test-vars.fd"
+          set +e
+          timeout --signal=INT 120s qemu-system-x86_64 \
+            -machine q35 -accel tcg -m 1024 -smp 2 \
+            -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
+            -drive "if=pflash,format=raw,file=$bundle/test-vars.fd" \
+            -drive "if=none,id=boot,format=raw,file=$bundle/boot-disk.raw" \
+            -device virtio-blk-pci,drive=boot,bootindex=1 \
+            -drive "if=none,id=source,format=raw,file=$usb" \
+            -device virtio-blk-pci,drive=source,bootindex=2 \
+            -display none -monitor none -serial file:"$bundle/qemu-usb.log" \
+            -snapshot -no-reboot
+          rc=$?
+          set -e
+          if { test "$rc" -ne 0 && test "$rc" -ne 124; } ||
+             ! grep -Fq 'VT_ORIGINAL_ISO_EFI_STARTIMAGE_EXECUTED' "$bundle/qemu-usb.log" ||
+             ! grep -Fq 'VT_USB_SOURCE_STATUS=selected' "$bundle/qemu-usb.log" ||
+             ! grep -Fq 'VT_USB_PVD_STATUS=verified' "$bundle/qemu-usb.log" ||
+             ! grep -Fq 'VT_USB_BOOT_STATUS=returned' "$bundle/qemu-usb.log" ||
+             ! grep -Fq 'VT_USB_TEARDOWN_STATUS=yes' "$bundle/qemu-usb.log"
+          then
+            tail -n 125 "$bundle/qemu-usb.log"
+            exit 41
+          fi
+          printf 'synthetic_ext4_gpt_source_efi_startimage=passed\n' \
+            | tee "$bundle/test-result.txt"
+          printf 'proxmox_actual_installer=not-tested\n' >> "$bundle/test-result.txt"
+          printf 'build_source_revision=%s\n' "$GITHUB_SHA" >> "$bundle/BUILD-INFO.txt"
+
+      - name: Publish verified boot-only image on experimental branch
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/mboot-usb-boot"
+          path=GRUB2/dist/secondary-usb-uefi
+          mkdir -p "$path"
+          cp "$src/boot-disk.raw.gz" "$src/SHA256SUMS" \
+             "$src/BUILD-INFO.txt" "$src/test-result.txt" "$path/"
+          ( cd "$path" && sha256sum -c SHA256SUMS )
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$path"
+          git diff --cached --exit-code && exit 0 || :
+          git commit -m "Publish tested experimental x86 UEFI USB-source boot disk"
+          # This is an ordinary fast-forward push. Concurrent updates cause
+          # failure rather than history rewrites or force updates.
+          git push origin HEAD:refs/heads/m-boot-secondary-uefi
+
+      - name: Upload standalone USB-source boot image evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: experimental-uefi-usb-source-boot
+          path: |
+            GRUB2/dist/secondary-usb-uefi/boot-disk.raw.gz
+            GRUB2/dist/secondary-usb-uefi/SHA256SUMS
+            GRUB2/dist/secondary-usb-uefi/BUILD-INFO.txt
+            GRUB2/dist/secondary-usb-uefi/test-result.txt
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Upload build diagnostics only (not an integration release)
         if: always()
