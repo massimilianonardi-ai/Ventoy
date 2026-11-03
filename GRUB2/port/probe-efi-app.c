@@ -6,6 +6,11 @@
 #include <efi.h>
 #include <efilib.h>
 
+extern EFI_STATUS vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system,
+                                         const UINT8 *chain,
+                                         UINT64 length,
+                                         EFI_SERIAL_IO_PROTOCOL *serial);
+
 static UINTN
 hex_digit (CHAR16 c)
 {
@@ -26,7 +31,8 @@ little (const UINT8 *p, UINTN n)
 }
 
 static EFI_STATUS
-check_chain (EFI_LOADED_IMAGE *loaded)
+check_chain (EFI_LOADED_IMAGE *loaded, const UINT8 **chain_out,
+             UINT64 *length_out)
 {
   CHAR16 *p = (CHAR16 *)loaded->LoadOptions;
   UINTN chars = loaded->LoadOptionsSize / sizeof (CHAR16);
@@ -83,6 +89,8 @@ check_chain (EFI_LOADED_IMAGE *loaded)
   chunks = little (b + 2596, 4);
   if (!chunks || chunks > 16384 || size != 2616 + chunks * 24)
     return EFI_COMPROMISED_DATA;
+  *chain_out = b;
+  *length_out = size;
   return EFI_SUCCESS;
 }
 
@@ -94,6 +102,8 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
   EFI_LOADED_IMAGE *loaded = NULL;
   EFI_SERIAL_IO_PROTOCOL *serial = NULL;
   EFI_STATUS status;
+  const UINT8 *chain = NULL;
+  UINT64 chain_length = 0;
   UINTN bytes;
   CHAR8 message[] = "VT_EFI_MEMORY_HANDOFF_OK\r\n";
 
@@ -101,16 +111,25 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
                               image, &loaded_guid, (VOID **)&loaded);
   if (EFI_ERROR (status))
     return status;
-  status = check_chain (loaded);
+  status = check_chain (loaded, &chain, &chain_length);
   if (EFI_ERROR (status))
     return status;
 
   status = uefi_call_wrapper (system->BootServices->LocateProtocol, 3,
                               &serial_guid, NULL, (VOID **)&serial);
-  if (!EFI_ERROR (status) && serial)
+  if (EFI_ERROR (status) || !serial)
+    return EFI_NOT_FOUND;
+
+  status = vt_check_efi_blockmap (system, chain, chain_length, serial);
+  if (EFI_ERROR (status))
     {
-      bytes = sizeof (message) - 1;
-      uefi_call_wrapper (serial->Write, 3, serial, &bytes, message);
+      CHAR8 failed[] = "VT_EFI_BLOCKMAP_FAILED\r\n";
+      bytes = sizeof (failed) - 1;
+      uefi_call_wrapper (serial->Write, 3, serial, &bytes, failed);
+      return status;
     }
-  return EFI_SUCCESS;
+
+  bytes = sizeof (message) - 1;
+  status = uefi_call_wrapper (serial->Write, 3, serial, &bytes, message);
+  return status;
 }
