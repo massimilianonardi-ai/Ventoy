@@ -265,19 +265,40 @@ vt_probe_virtual_media (EFI_SYSTEM_TABLE *system,
 
   /* Negative protocol semantics: invalid media, unaligned size,
    * out-of-range LBA and attempts to modify the virtual CD. */
-  if (uefi_call_wrapper (published->ReadBlocks, 5,
-                         published, 0, 0, VT_ISO_BLOCK, buffer)
-      != EFI_MEDIA_CHANGED
-      || uefi_call_wrapper (published->ReadBlocks, 5,
-                            published, media.media.MediaId, 0, 512, buffer)
-         != EFI_BAD_BUFFER_SIZE
-      || uefi_call_wrapper (published->ReadBlocks, 5,
-                            published, media.media.MediaId, sectors, 2048,
-                            buffer) != EFI_INVALID_PARAMETER
-      || uefi_call_wrapper (published->WriteBlocks, 5,
-                            published, media.media.MediaId, 0, 2048,
-                            buffer) != EFI_WRITE_PROTECTED)
+  status = uefi_call_wrapper (published->ReadBlocks, 5,
+                              published, 0, 0, VT_ISO_BLOCK, buffer);
+  if (status != EFI_MEDIA_CHANGED)
     {
+      vt_stage (serial, "VT_EFI_NEGATIVE_MEDIA_FAILED\r\n",
+                sizeof ("VT_EFI_NEGATIVE_MEDIA_FAILED\r\n") - 1);
+      status = EFI_COMPROMISED_DATA;
+      goto unmount;
+    }
+  status = uefi_call_wrapper (published->ReadBlocks, 5,
+                              published, media.media.MediaId, 0, 512, buffer);
+  if (status != EFI_BAD_BUFFER_SIZE)
+    {
+      vt_stage (serial, "VT_EFI_NEGATIVE_SIZE_FAILED\r\n",
+                sizeof ("VT_EFI_NEGATIVE_SIZE_FAILED\r\n") - 1);
+      status = EFI_COMPROMISED_DATA;
+      goto unmount;
+    }
+  status = uefi_call_wrapper (published->ReadBlocks, 5,
+                              published, media.media.MediaId, sectors, 2048,
+                              buffer);
+  if (status != EFI_INVALID_PARAMETER)
+    {
+      vt_stage (serial, "VT_EFI_NEGATIVE_RANGE_FAILED\r\n",
+                sizeof ("VT_EFI_NEGATIVE_RANGE_FAILED\r\n") - 1);
+      status = EFI_COMPROMISED_DATA;
+      goto unmount;
+    }
+  status = uefi_call_wrapper (published->WriteBlocks, 5,
+                              published, media.media.MediaId, 0, 2048, buffer);
+  if (status != EFI_WRITE_PROTECTED)
+    {
+      vt_stage (serial, "VT_EFI_NEGATIVE_WRITE_FAILED\r\n",
+                sizeof ("VT_EFI_NEGATIVE_WRITE_FAILED\r\n") - 1);
       status = EFI_COMPROMISED_DATA;
       goto unmount;
     }
