@@ -245,26 +245,26 @@ vt_map_build_ventoy (const struct vt_map_context *map, grub_file_t file)
       goto out;
     }
 
-  grub_printf ("VT_CHAIN_HEADER count=%u image_sector=2048 disk_sector=512\\n",
+  grub_printf ("VT_CHAIN_HEADER count=%u image_sector=2048 disk_sector=512\n",
                (unsigned) map->count);
   for (i = 0; i < map->count; ++i)
     {
       const ventoy_img_chunk *chunk = &chunks[i];
       const ventoy_image_disk_region *region = &location->regions[i];
 
-      grub_printf ("VT_CHAIN_CHUNK i=%u is=%u ie=%u ds=%llu de=%llu\\n",
+      grub_printf ("VT_CHAIN_CHUNK i=%u is=%u ie=%u ds=%llu de=%llu\n",
                    (unsigned) i,
                    (unsigned) chunk->img_start_sector,
                    (unsigned) chunk->img_end_sector,
                    (unsigned long long) chunk->disk_start_sector,
                    (unsigned long long) chunk->disk_end_sector);
-      grub_printf ("VT_LOCATION_REGION i=%u is=%u n=%u ds=%llu\\n",
+      grub_printf ("VT_LOCATION_REGION i=%u is=%u n=%u ds=%llu\n",
                    (unsigned) i,
                    (unsigned) region->image_start_sector,
                    (unsigned) region->image_sector_count,
                    (unsigned long long) region->disk_start_sector);
     }
-  grub_printf ("VT_CHAIN_SUCCESS count=%u image_bytes=%llu\\n",
+  grub_printf ("VT_CHAIN_SUCCESS count=%u image_bytes=%llu\n",
                (unsigned) location->region_count,
                (unsigned long long) file->size);
 out:
