@@ -4,7 +4,7 @@
 set -eu
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4]" >&2
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3]" >&2
   exit 2
 fi
 
@@ -12,14 +12,15 @@ module=$1
 output=$2
 source_fs=${3:-fat32}
 case "$source_fs" in
-  fat32) expected_grub_fs='fs=fat'; min_extents=2 ;;
-  ext4) expected_grub_fs='fs=ext2'; min_extents=1 ;;
+  fat32) expected_grub_fs='fs=fat'; min_extents=2; part_num=1 ;;
+  ext4) expected_grub_fs='fs=ext2'; min_extents=1; part_num=1 ;;
+  ext4-gpt3) expected_grub_fs='fs=ext2'; min_extents=1; part_num=3 ;;
   *) echo "Unsupported source filesystem: $source_fs" >&2; exit 2 ;;
 esac
 [ -s "$module" ] || { echo 'Nonempty compiled module required' >&2; exit 3; }
 [ ! -e "$output" ] || { echo 'Output directory already exists' >&2; exit 4; }
 
-for binary in grub-mkimage sgdisk mkfs.vfat mkfs.ext4 debugfs mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 cmp xorriso; do
+for binary in grub-mkimage sgdisk mkfs.vfat mkfs.ext4 debugfs mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 cmp awk xorriso; do
   command -v "$binary" >/dev/null 2>&1 || {
     echo "Missing test dependency: $binary" >&2
     exit 5
@@ -80,13 +81,27 @@ for target in boot iso; do
   part="$output/$target-part.img"
   disk="$output/$target-disk.img"
   truncate -s 64M "$part"
-  truncate -s 96M "$disk"
-  type=8300
-  if [ "$target" = boot ]; then
-    type=ef00
+  if [ "$target" = iso ] && [ "$part_num" = 3 ]; then
+    # Disposable m-boot-like GPT geometry: p1 BIOS, p2 EFI, p3 data.
+    truncate -s 128M "$disk"
+    sgdisk --clear --new=1:2048:+10M --typecode=1:ef02 \
+      --new=2:0:+16M --typecode=2:ef00 \
+      --new=3:0:+64M --typecode=3:8300 "$disk" \
+      > "$output/$target-gpt.log" 2>&1
+    iso_sector_start=$(sgdisk -i 3 "$disk" | \
+      awk '/First sector:/ { print $3 }')
+    case "$iso_sector_start" in
+      ''|*[!0-9]*) echo 'Could not locate GPT3 source sector' >&2; exit 6 ;;
+    esac
+  else
+    truncate -s 96M "$disk"
+    type=8300
+    if [ "$target" = boot ]; then
+      type=ef00
+    fi
+    sgdisk --clear --new=1:2048:+64M --typecode="1:$type" "$disk" \
+      > "$output/$target-gpt.log" 2>&1
   fi
-  sgdisk --clear --new=1:2048:+64M --typecode="1:$type" "$disk" \
-    > "$output/$target-gpt.log" 2>&1
   if [ "$target" = boot ] || [ "$source_fs" = fat32 ]; then
     mkfs.vfat -F 32 "$part" > "$output/$target-fat.log" 2>&1
   fi
@@ -174,8 +189,13 @@ else
 fi
 
 for target in boot iso; do
-  dd if="$output/$target-part.img" of="$output/$target-disk.img" \
-    bs=1M seek=1 conv=notrunc status=none
+  if [ "$target" = iso ] && [ "$part_num" = 3 ]; then
+    dd if="$output/iso-part.img" of="$output/iso-disk.img" \
+      bs=512 seek="$iso_sector_start" conv=notrunc status=none
+  else
+    dd if="$output/$target-part.img" of="$output/$target-disk.img" \
+      bs=1M seek=1 conv=notrunc status=none
+  fi
 done
 
 # OVMF runs without Secure Boot on two file-backed virtual disks.
@@ -197,8 +217,8 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
    grep -q 'VT_MAP_SUCCESS' "$output/qemu.log" &&
    grep -q 'VTOY_NO_CORE_PROBE_COMPLETED' "$output/qemu.log" &&
    grep -q 'VTOY_BOOT_DEVICE=hd0,gpt1' "$output/qemu.log" &&
-   grep -q 'VTOY_ISO_DEVICE=hd1,gpt1' "$output/qemu.log" &&
-   grep -q 'source=(hd1,gpt1)/vt-probe-image.iso disk=hd1 partition=1' "$output/qemu.log" &&
+   grep -q "VTOY_ISO_DEVICE=hd1,gpt$part_num" "$output/qemu.log" &&
+   grep -q "source=(hd1,gpt$part_num)/vt-probe-image.iso disk=hd1 partition=$part_num" "$output/qemu.log" &&
    grep -q "$expected_grub_fs" "$output/qemu.log" &&
    grep -q 'bytes=44' "$output/qemu.log" &&
    ! grep -q 'error: ' "$output/qemu.log"; then
@@ -212,7 +232,7 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
   python3 "$(dirname "$0")/verify-extent-map.py" \
     "$output/qemu.log" "$output/vt-map-image.iso" \
     "$output/iso-disk.img" "$output/iso-map-verification.txt" \
-    "$min_extents"
+    "$min_extents" "$part_num"
 else
   echo 'uefi_probe=failed' | tee "$output/runtime-result.txt"
   echo "QEMU exit $qemu_status; last serial output:" >&2
