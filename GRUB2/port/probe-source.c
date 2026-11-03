@@ -15,6 +15,8 @@
 #include <grub/misc.h>
 #include <grub/err.h>
 
+GRUB_MOD_LICENSE ("GPLv3+");
+
 static grub_command_t source_probe_command;
 
 static grub_err_t
