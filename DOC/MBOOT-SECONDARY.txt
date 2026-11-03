@@ -5,9 +5,12 @@ Base: ventoy/Ventoy master 74cff34240dca6991b79c6656770670da7b0c39e
 
 Goal
 ----
-Keep m-boot's existing firmware boot and GRUB menu. Chainload an independent
-Ventoy GRUB EFI application only for ISO images that require Ventoy's
-compatibility mechanisms. Do not install Ventoy2Disk to the m-boot disk.
+Keep m-boot's existing firmware boot and UNMODIFIED runner-compatible
+GRUB core and module set. Load any necessary customized Ventoy functionality
+as a version-matched GRUB .mod, not as a rebuilt or patched GRUB core. If
+a UEFI virtual-CD mechanism is required, its Ventoy .efi application is a
+SEPARATE EFI executable, not the same thing as the GRUB .mod. Do not install
+Ventoy2Disk to the m-boot disk.
 
 Operator's confirmed original-Ventoy result
 -------------------------------------------
@@ -85,37 +88,65 @@ Implemented source adaptations on the experimental branch
 - The Ventoy EFI application's ISO9660/UDF driver paths select the nested
   /ventoy-secondary/ventoy/ directory only for the m-boot opt-in.
 
-Safe test sequence (not yet executed)
--------------------------------------
-1. Run .github/workflows/probe-secondary-grub.yml on the named
-   ubuntu-24.04 GitHub runner. It records the actual distribution GRUB
-   packages and verifies a stock GRUB EFI baseline; it does NOT compile
-   or release Ventoy. The discovered versions are provenance, not pins.
-2. Use .github/workflows/port-runner-grub.yml to diagnose the complete
-   patch gap against distribution GRUB source. It compares upstream 2.04
-   solely as the historical reference, not as the selected build version.
-   The resulting patch is diagnostic, NOT a release build input.
-3. Use .github/workflows/probe-ventoy-module.yml to compile only the
-   unported Ventoy module against the runner source. It applies
-   GRUB2/port/runner-efi-api.patch, runner-browser-api.patch and
-   runner-file-api.patch to a temporary GRUB tree. The patches port
-   initial EFI GUID/variable, browser and real file-size APIs, but the
-   experiment still lacks other GRUB core ABI integrations: a failure
-   is an expected evidence boundary, not permission to publish its output.
-4. Finish porting the Ventoy GRUB core and custom module to the actual
-   runner-matched GRUB sources. Rebuild matching GRUB tools and modules
-   with VENTOY_GRUB_PREFIX='(,2)/ventoy-secondary/grub'.
-   Original GRUB2/buildgrub.sh and MOD_SRC/grub-2.04/ remain legacy
-   upstream reference, NOT a secondary release build route.
-5. Build the modified EDK2 Ventoy UEFI application too. Unmodified
-   ventoy_x64.efi does not contain the relocated ISO driver paths.
-6. Stage same-build Ventoy resources under /ventoy-secondary/ in a
-   disposable QEMU disk only, preserving m-boot's EFI fallback and loader.
-7. With Secure Boot disabled in OVMF, chainload
-   /ventoy-secondary/EFI/BOOT/grubx64_real.efi from m-loader.
-8. Verify secondary GRUB initialization, m-boot GPT detection, ISO
-   enumeration, UEFI ISO chainload and kernel/live-root mount. Also check
-   the changed fork on a disposable standard Ventoy GPT layout.
+Current no-core development route (decision 2026-11-03)
+--------------------------------------------------------
+The operator rejects rebuilding GRUB core as a dependency for m-boot's
+ISO engine. The previous full-GRUB source-delta workflow and patched-core
+prototype are DIAGNOSTIC HISTORY, not the intended build or release
+strategy. The branch's GRUB2/MOD_SRC/grub-2.04 overlay is evidence of
+what Ventoy changed, NOT a GRUB core patch to be deployed.
+
+1. Compile only GRUB .mod code against the exact Ubuntu runner GRUB source
+   and ABI; retain the existing m-boot GRUB binary and standard modules.
+   Probe GRUB2/port/probe-source.c with
+   .github/workflows/probe-standalone-ventoy-module.yml. This temporary
+   diagnostic module reads source device, partition, filesystem and file
+   size by standard grub_file_open; it is NOT an ISO boot implementation.
+   Build/make generation must not compile or patch GRUB kernel/core.
+2. Load the resulting .mod dynamically with standard m-boot GRUB in a
+   disposable UEFI QEMU test. Verify an ISO on the normal local data
+   partition and an image on a second virtual disk without VLNK or
+   reliance on Ventoy disk branding. Compile success alone does not
+   establish actual load/runtime behavior.
+3. Rework the existing Ventoy module by deleting fake VLNK routing and
+   callers that use .vlnk suffix recognition to synthesize a same-partition
+   image path. Identify the selected ISO by its REAL openable GRUB
+   device/partition/path. Keep device/FS identification and required
+   image sector maps for the OS handoff. Do not replace lost APIs with
+   fake data or empty stub implementations.
+4. Investigate whether standard GRUB disk read hooks, filesystem APIs,
+   EFI page allocation and file filters suffice for the remaining
+   Ventoy functions. Retain the separate EFI virtual-CD application ONLY
+   if testing shows its functionality is necessary; it is not a module
+   dynamically loaded by insmod. Report unsupported core ABI assumptions
+   instead of reintroducing GRUB core patches.
+5. If maintaining a generic ISO engine demands a growing collection of
+   installer-specific quirks, evaluate a simpler route for the actual
+   Proxmox and TrueNAS installation images: boot kernel and initramfs from
+   GRUB loopback and, only if required, add a small repeatable initramfs
+   adapter for finding the backing ISO. Compare on real disposable QEMU
+   tests before selecting it. Do not modify original ISO bytes by default.
+6. Never release a partial proof as Ventoy; only release a tested m-boot
+   integration after module load, ISO boot, installer/root mounting and
+   cross-disk handoff validation. No physical USB writes are authorized.
+
+Observed dependencies:
+- ventoy_check_file_exist() is only formatted-path grub_file_open/close;
+  it needs no special GRUB core support.
+- grub_file_is_vlnk_suffix() recognizes alias names; the patched
+  grub_file_open() resolves aliases and sets file->vlnk. Such aliases
+  are an optional workaround for Ventoy's fixed-image-path design,
+  NOT an intrinsic requirement of a UEFI ISO image or GRUB.
+- Ventoy's file->read_hook/disk-hook and filesystem extent helpers build
+  physical sector mappings used during EFI and post-kernel handoff; do
+  NOT discard them without replacing their role correctly.
+- Ventoy's EFI app already reads the selected disk metadata/sector list.
+  On non-GPT disks it may apply an additional legacy-Ventoy layout check;
+  that must not become an m-boot restriction.
+- Stock GRUB file filters exist; Ventoy already registers one using the
+  standard grub_file_filter_register. GRUB menu hotkeys/themes are optional
+  to the image boot engine, not reasons to patch the core.
+- No standalone/full Ventoy module has been proven boot-capable yet.
 
 Known limits / do not claim yet
 -------------------------------
