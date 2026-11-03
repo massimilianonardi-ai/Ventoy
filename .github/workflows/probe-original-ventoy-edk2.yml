@@ -212,8 +212,19 @@ jobs:
           mkdir -p "$RUNNER_TEMP/usb-source-tree/m/boot/iso"
           cp "$RUNNER_TEMP/ventoy-original-edk2/original-iso-boot/vt-map-image.iso" \
             "$RUNNER_TEMP/usb-source-tree/m/boot/iso/proxmox-ve_9.2-1.iso"
-          truncate -s 18M \
-            "$RUNNER_TEMP/usb-source-tree/m/boot/iso/proxmox-ve_9.2-1.iso"
+          python3 - "$RUNNER_TEMP/usb-source-tree/m/boot/iso/proxmox-ve_9.2-1.iso" <<'PY'
+          import pathlib
+          import sys
+          path = pathlib.Path(sys.argv[1])
+          target = 18 * 1024 * 1024
+          with path.open("ab") as stream:
+              while stream.tell() < target:
+                  stream.write(b'VTOY-DATA' * min(4096, (target-stream.tell())//9))
+          if path.stat().st_size < target:
+              with path.open("ab") as stream:
+                  stream.write(b'V' * (target - path.stat().st_size))
+          assert path.stat().st_size == target
+          PY
           usb="$RUNNER_TEMP/usb-source-gpt.raw"
           part="$RUNNER_TEMP/usb-source-ext4.img"
           truncate -s 160M "$usb"
