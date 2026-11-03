@@ -547,36 +547,45 @@ STATIC EFI_STATUS EFIAPI ventoy_load_image
 STATIC EFI_STATUS ventoy_parse_secondary_guid(IN CONST CHAR16 *Options)
 {
     STATIC CONST CHAR16 Name[] = L"gptguid:";
-    STATIC CONST CHAR8 Alphabet[] = "0123456789abcdef";
     CONST CHAR16 *Start = StrStr(Options, Name);
-    UINTN i, j;
+    UINTN i;
     if (!Start || (Start != Options && Start[-1] != L' '))
     {
         return EFI_INVALID_PARAMETER;
     }
     Start += StrLen(Name);
-    for (i = 0; i < 16; i++)
+    if (StrLen(Start) < 32)
     {
-        UINTN Parts[2];
-        UINTN k;
-        for (k = 0; k < 2; k++)
+        return EFI_INVALID_PARAMETER;
+    }
+    for (i = 0; i < 32; i++)
+    {
+        CHAR16 Digit = Start[i];
+        UINTN Nibble;
+        if (Digit >= L'0' && Digit <= L'9')
         {
-            Parts[k] = 16;
-            for (j = 0; j < 16; j++)
-            {
-                if (Start[i * 2 + k] == (CHAR16)Alphabet[j] ||
-                    Start[i * 2 + k] == (CHAR16)(j < 6 ? L'A' + j - 10 : 0))
-                {
-                    Parts[k] = j;
-                    break;
-                }
-            }
-            if (Parts[k] >= 16)
-            {
-                return EFI_INVALID_PARAMETER;
-            }
+            Nibble = Digit - L'0';
         }
-        gMbootSourceGuid[i] = (UINT8)((Parts[0] << 4) | Parts[1]);
+        else if (Digit >= L'a' && Digit <= L'f')
+        {
+            Nibble = Digit - L'a' + 10;
+        }
+        else if (Digit >= L'A' && Digit <= L'F')
+        {
+            Nibble = Digit - L'A' + 10;
+        }
+        else
+        {
+            return EFI_INVALID_PARAMETER;
+        }
+        if ((i & 1) == 0)
+        {
+            gMbootSourceGuid[i / 2] = (UINT8)(Nibble << 4);
+        }
+        else
+        {
+            gMbootSourceGuid[i / 2] |= (UINT8)Nibble;
+        }
     }
     if (Start[32] != L' ' && Start[32] != 0)
     {
@@ -604,7 +613,6 @@ STATIC EFI_STATUS ventoy_find_secondary_source(VOID)
     UINT8 *Sector;
     UINT64 Logical = 0, PvdLba = 0;
     UINT64 ImageSectors;
-    UINT32 OriginalChecksum = 0;
     UINT8 Sum = 0;
     ventoy_guid Guid = VENTOY_GUID;
 
@@ -1218,6 +1226,10 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
     chain = (ventoy_chain_head *)StrHexToUintn(pPos + 4);
 
     pPos = StrStr(pPos, L"size:");
+    if (gMbootSourceProbe && !pPos)
+    {
+        return EFI_INVALID_PARAMETER;
+    }
     size = StrDecimalToUintn(pPos + 5);
     if (gMbootSourceProbe)
     {
