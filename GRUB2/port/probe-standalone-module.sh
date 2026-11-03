@@ -23,6 +23,8 @@ cp -a "$source/." "$output/source/"
 mkdir -p "$output/source/grub-core/ventoy"
 cp "$here/probe-source.c" "$output/source/grub-core/ventoy/source_probe.c"
 cp "$here/probe-extents.c" "$output/source/grub-core/ventoy/extent_probe.c"
+# Use upstream Ventoy ABI types; only the added .mod is compiled.
+cp "$here/../MOD_SRC/grub-2.04/include/grub/ventoy.h" "$output/source/include/grub/ventoy.h"
 
 cat >> "$output/source/grub-core/Makefile.core.def" <<'EOF'
 
