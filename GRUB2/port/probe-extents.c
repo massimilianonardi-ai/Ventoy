@@ -56,17 +56,19 @@ vt_map_hook (grub_disk_addr_t sector, unsigned offset,
   if (ctx->bad || !length)
     return GRUB_ERR_NONE;
 
+  /* On the runner's GRUB 2.12 the file read hook reports physical
+     sectors on the WHOLE disk, not partition-relative sectors. This
+     was established by the independent raw-GPT-byte verification:
+     adding partition->start twice produced a provably wrong map. */
   if (offset >= VT_MAP_SECTOR_SIZE
-      || sector > (~(grub_uint64_t) 0 >> VT_MAP_SECTOR_BITS)
-      || ctx->partition_sector >
-        (~(grub_uint64_t) 0 >> VT_MAP_SECTOR_BITS) - sector)
+      || sector < ctx->partition_sector
+      || sector > (~(grub_uint64_t) 0 >> VT_MAP_SECTOR_BITS))
     {
       ctx->bad = 1;
       return GRUB_ERR_NONE;
     }
 
-  physical = ((ctx->partition_sector + sector) << VT_MAP_SECTOR_BITS)
-             + offset;
+  physical = (sector << VT_MAP_SECTOR_BITS) + offset;
   logical = ctx->mapped;
   span = (grub_uint64_t) length;
 
