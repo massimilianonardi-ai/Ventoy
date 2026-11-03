@@ -1,6 +1,6 @@
 m-boot secondary UEFI integration — experimental fork work
 =======================================================
-Status: source-only prototype, not compiled or boot-tested
+Status: GRUB 2.12 partial module compile probes, NOT a full build or boot test
 Base: ventoy/Ventoy master 74cff34240dca6991b79c6656770670da7b0c39e
 
 Goal
@@ -97,8 +97,9 @@ Safe test sequence (not yet executed)
    The resulting patch is diagnostic, NOT a release build input.
 3. Use .github/workflows/probe-ventoy-module.yml to compile only the
    unported Ventoy module against the runner source. It applies
-   GRUB2/port/runner-efi-api.patch to a temporary source copy, restoring
-   the EFI GUID/variable API and Secure Boot state declarations. The
+   GRUB2/port/runner-efi-api.patch, runner-browser-api.patch and
+   runner-file-api.patch to a temporary GRUB tree. The patches port
+   initial EFI GUID/variable, browser and real file-size APIs, but the
    experiment still lacks other GRUB core ABI integrations: a failure
    is an expected evidence boundary, not permission to publish its output.
 4. Finish porting the Ventoy GRUB core and custom module to the actual
@@ -118,6 +119,11 @@ Safe test sequence (not yet executed)
 
 Known limits / do not claim yet
 -------------------------------
+- GitHub Actions source-compile probe `41600842303` applied all three
+  temporary GRUB 2.12 port patches, then failed compiling remaining
+  incompatible Ventoy GRUB core API calls (EFI buffer, virtual-link,
+  filesystem/blocklist, GRUB exit and GUID interfaces). This is NOT
+  a successful Ventoy module build, firmware boot or release artifact.
 - No successful custom Ventoy GRUB compilation/build, OVMF run, kernel
   handoff, ARM64 boot, Secure Boot chain or physical USB test has been
   obtained for this branch. A stock-runner GRUB probe is not such a build.
