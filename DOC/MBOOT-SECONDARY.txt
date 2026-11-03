@@ -372,5 +372,11 @@ Original EDK2 runtime source selection on disposable UEFI (experimental):
 - CI run 41659888263 on 3d95311a85ab7886a9a878e2c257cbd9a3ee486a
   succeeded for FAT32 GPT1 and ext4 GPT3 under actual OVMF + stock GRUB,
   despite an additional same-MBR different-GPT-GUID whole disk. No original
-  EDK2 boot catalog use or installer boot was proven. Negative wrong-GPT-GUID
-  test remains to be validated before declaring rejection proof.
+  EDK2 boot catalog use or installer boot was proven. The subsequent
+  GitHub Actions run 41660901038 on ddea29deb9209b134819aaca216a5ae2b3b3f1ff
+  completed SUCCESS with original FAT32 GPT1 and ext4 GPT3 selection and
+  an additional original VentoyEfiMain run supplied an all-zero, incorrect
+  GPT GUID: the real app returned vt_original_source_probe=rejected,
+  proving this fixture does not silently select the same-MBR competing disk.
+  Diagnostic GRUB module CI run 41660901189 on the same commit also SUCCESS.
+  No original virtual-CD/boot-catalog or installer boot was exercised.
