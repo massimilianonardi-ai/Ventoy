@@ -10,6 +10,7 @@ import hashlib
 import re
 import struct
 import sys
+import zlib
 from pathlib import Path
 
 
@@ -34,14 +35,16 @@ def gpt_partition_range(disk, part_number):
 
 
 def main():
-    checked(len(sys.argv) in (5, 6, 7),
+    checked(len(sys.argv) in (5, 6, 7, 8),
             "usage: verify-extent-map.py QEMU-LOG ISO RAW-GPT-DISK REPORT "
-            "[MIN-EXTENTS [PARTITION-NUMBER]]")
+            "[MIN-EXTENTS [PARTITION-NUMBER [efi]]]")
     log, iso_path, disk_path, report_path = (
         Path(x) for x in sys.argv[1:5]
     )
     min_extents = int(sys.argv[5]) if len(sys.argv) >= 6 else 2
-    part_num = int(sys.argv[6]) if len(sys.argv) == 7 else 1
+    part_num = int(sys.argv[6]) if len(sys.argv) >= 7 else 1
+    verify_efi = len(sys.argv) == 8 and sys.argv[7] == "efi"
+    checked(len(sys.argv) != 8 or verify_efi, "invalid EFI verification option")
     checked(1 <= min_extents <= 16384, "invalid minimum extent count")
     checked(1 <= part_num <= 128, "invalid GPT partition number")
 
@@ -185,6 +188,7 @@ def main():
     previous_physical_end = None
     reconstructed = hashlib.sha256()
     original = hashlib.sha256()
+    efi_crc32 = 0
     discontinuities = 0
 
     # Stream at most 1 MiB at a time, even for large installation ISOs.
@@ -223,6 +227,7 @@ def main():
                         f"raw disk mismatch at ISO byte {offset + size - unread}")
                 original.update(source)
                 reconstructed.update(raw)
+                efi_crc32 = zlib.crc32(source, efi_crc32)
                 unread -= wanted
 
             offset += size
@@ -233,6 +238,14 @@ def main():
             "reconstructed SHA256 mismatch")
     checked(discontinuities >= min_extents - 1,
             "required fragmentation was not observed")
+    if verify_efi:
+        actual_crc = re.search(r"VT_EFI_BLOCKMAP_OK crc32=([0-9a-f]{8})",
+                               serial)
+        checked(actual_crc is not None,
+                "EFI did not read the full ISO from native BlockIo")
+        checked(int(actual_crc.group(1), 16) == efi_crc32,
+                f"EFI BlockIo CRC mismatch: {actual_crc.group(1)} "
+                f"vs source {efi_crc32:08x}")
     result = (
         "iso_map_verification=passed\n"
         "iso_format=iso9660\n"
@@ -247,6 +260,7 @@ def main():
         f"source_sha256={original.hexdigest()}\n"
         f"reconstructed_sha256={reconstructed.hexdigest()}\n"
         "checked_bytes=all\n"
+        f"efi_blockio_full_iso_crc32={'verified' if verify_efi else 'not-tested'}\n"
         "grub_core_patched=no\n"
         "physical_device_writes=no\n"
     )
