@@ -13,7 +13,7 @@ output=$2
 [ -s "$module" ] || { echo 'Nonempty compiled module required' >&2; exit 3; }
 [ ! -e "$output" ] || { echo 'Output directory already exists' >&2; exit 4; }
 
-for binary in grub-mkimage sgdisk mkfs.vfat mmd mcopy qemu-system-x86_64 timeout grep dd; do
+for binary in grub-mkimage sgdisk mkfs.vfat mmd mcopy mdel qemu-system-x86_64 timeout grep dd python3 xorriso; do
   command -v "$binary" >/dev/null 2>&1 || {
     echo "Missing test dependency: $binary" >&2
     exit 5
@@ -56,6 +56,9 @@ echo VTOY_ISO_DEVICE=$isopart
 set prefix=($bootpart)/grub
 insmod ($bootpart)/grub/x86_64-efi/ventoy_source_probe.mod
 vt_source_probe ($isopart)/vt-probe-image.iso
+echo VTOY_EXTENT_MAP_BEGIN
+vt_extent_probe ($isopart)/vt-map-image.iso
+echo VTOY_EXTENT_MAP_DONE
 echo VTOY_NO_CORE_PROBE_COMPLETED
 halt
 EOF
@@ -91,6 +94,33 @@ mcopy -i "$output/boot-part.img" "$output/vt-probe-boot.marker" ::/vt-probe-boot
 echo 'source-location fixture, not a bootable ISO' > "$output/vt-probe-image.iso"
 mcopy -i "$output/iso-part.img" "$output/vt-probe-image.iso" ::/vt-probe-image.iso
 
+# Create a genuine ISO9660 filesystem with deterministic, nonuniform data.
+# The bytes are intentionally NOT a hand-written fake ISO header.
+mkdir "$output/iso-content"
+python3 - "$output/iso-content/payload.bin" <<'PY'
+import hashlib
+import sys
+with open(sys.argv[1], "wb") as stream:
+    for index in range(4096):
+        stream.write(hashlib.sha256(index.to_bytes(4, "big")).digest() * 16)
+PY
+xorriso -as mkisofs -quiet -R -J -V VTOY_MAP_TEST \
+  -o "$output/vt-map-image.iso" "$output/iso-content" \
+  > "$output/xorriso.log" 2>&1
+xorriso -indev "$output/vt-map-image.iso" -pvd_info \
+  >> "$output/xorriso.log" 2>&1
+
+# Force noncontiguous FAT allocation: A, B, C; remove B, then put a
+# larger ISO across the free hole and later free clusters.
+truncate -s 1M "$output/filler-A.bin"
+truncate -s 1536K "$output/filler-B.bin"
+truncate -s 1M "$output/filler-C.bin"
+mcopy -i "$output/iso-part.img" "$output/filler-A.bin" ::/A.FILL
+mcopy -i "$output/iso-part.img" "$output/filler-B.bin" ::/B.FILL
+mcopy -i "$output/iso-part.img" "$output/filler-C.bin" ::/C.FILL
+mdel -i "$output/iso-part.img" ::/B.FILL
+mcopy -i "$output/iso-part.img" "$output/vt-map-image.iso" ::/vt-map-image.iso
+
 for target in boot iso; do
   dd if="$output/$target-part.img" of="$output/$target-disk.img" \
     bs=1M seek=1 conv=notrunc status=none
@@ -110,7 +140,9 @@ timeout 90 qemu-system-x86_64 -machine q35 -accel tcg -m 1024 -smp 2 \
 qemu_status=$?
 set -e
 
-if grep -q 'VTOY_NO_CORE_PROBE_COMPLETED' "$output/qemu.log" &&
+if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
+   grep -q 'VT_MAP_SUCCESS' "$output/qemu.log" &&
+   grep -q 'VTOY_NO_CORE_PROBE_COMPLETED' "$output/qemu.log" &&
    grep -q 'VTOY_BOOT_DEVICE=hd0,gpt1' "$output/qemu.log" &&
    grep -q 'VTOY_ISO_DEVICE=hd1,gpt1' "$output/qemu.log" &&
    grep -q 'source=(hd1,gpt1)/vt-probe-image.iso disk=hd1 partition=1' "$output/qemu.log" &&
@@ -124,6 +156,9 @@ if grep -q 'VTOY_NO_CORE_PROBE_COMPLETED' "$output/qemu.log" &&
     echo 'physical_device_writes=no'
     echo "qemu_exit=$qemu_status"
   } | tee "$output/runtime-result.txt"
+  python3 "$(dirname "$0")/verify-extent-map.py" \
+    "$output/qemu.log" "$output/vt-map-image.iso" \
+    "$output/iso-disk.img" "$output/iso-map-verification.txt"
 else
   echo 'uefi_probe=failed' | tee "$output/runtime-result.txt"
   echo "QEMU exit $qemu_status; last serial output:" >&2
