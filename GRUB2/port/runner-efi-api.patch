@@ -1,52 +1,32 @@
 --- a/grub-core/ventoy/ventoy.c
 +++ b/grub-core/ventoy/ventoy.c
-@@ -345,7 +345,7 @@ static void ventoy_get_pi_version(char *str, grub_size_t len)
- {
-     grub_uint32_t data = 0;
-     grub_efi_uintn_t i = 0;
+@@ -348 +348 @@
 -    grub_efi_guid_t dxest =
 +    grub_guid_t dxest =
-         { 0x05ad34ba, 0x6f02, 0x4214, {0x95, 0x2e, 0x4d, 0xa0, 0x39, 0x8e, 0x2b, 0xb9 } };
- 
-     for (i = 0; i < grub_efi_system_table->num_table_entries; i++)
-@@ -404,21 +404,22 @@ int ventoy_set_sb_policy(void)
- static void ventoy_get_uefi_sb(void)
- {
-     grub_uint8_t secure_boot = 0;
-     grub_uint8_t setup_mode = 0;
+@@ -409 +409 @@
 -    grub_uint8_t *var = NULL;
 +    void *var = NULL;
-     grub_size_t size = 0;
+@@ -411 +411 @@
 -    grub_efi_guid_t global = GRUB_EFI_GLOBAL_VARIABLE_GUID;
 +    grub_guid_t global = GRUB_EFI_GLOBAL_VARIABLE_GUID;
- 
+@@ -413,2 +413,2 @@
 -    var = grub_efi_get_variable("SecureBoot", &global, &size);
 -    if (var && size == 1 && *var == 1)
 +    if (grub_efi_get_variable("SecureBoot", &global, &size, &var) ==
 +        GRUB_EFI_SUCCESS && var && size == 1 && *(grub_uint8_t *)var == 1)
-     {
-         secure_boot = 1;
+@@ -418,3 +418,4 @@
      }
      grub_check_free(var);
  
 +    var = NULL;
-     size = 0;
+@@ -421,2 +422,2 @@
 -    var = grub_efi_get_variable("SetupMode", &global, &size);
 -    if (var && size == 1 && *var == 1)
 +    if (grub_efi_get_variable("SetupMode", &global, &size, &var) ==
 +        GRUB_EFI_SUCCESS && var && size == 1 && *(grub_uint8_t *)var == 1)
-     {
-         setup_mode = 1;
-     }
-@@ -433,7 +437,7 @@ static void ventoy_get_uefi_sb(void)
- 
- static int ventoy_secure_boot_init(void)
- {
+@@ -438 +439 @@
 -    grub_efi_guid_t ProtGuid = VTOY_SHIM_POLICY_GUID;
 +    grub_guid_t ProtGuid = VTOY_SHIM_POLICY_GUID;
- 
-     ventoy_get_uefi_sb();
- 
 --- a/include/grub/env.h
 +++ b/include/grub/env.h
 @@ -24,6 +24,11 @@
@@ -61,14 +41,3 @@
  struct grub_env_var;
  
  typedef const char *(*grub_env_read_hook_t) (struct grub_env_var *var,
---- a/grub-core/kern/env.c
-+++ b/grub-core/kern/env.c
-@@ -22,5 +22,8 @@
- #include <grub/misc.h>
- #include <grub/mm.h>
- 
-+grub_uint8_t g_sys_sb = 0;
-+grub_uint8_t g_sb_policy = VTOY_SB_POLICY_BYPASS;
-+
- /* The initial context.  */
- static struct grub_env_context initial_context;
