@@ -1,0 +1,91 @@
+name: Diagnose Ventoy GRUB port to runner source
+
+on:
+  push:
+    branches:
+      - m-boot-secondary-uefi
+    paths:
+      - .github/workflows/port-runner-grub.yml
+      - GRUB2/port-runner-grub.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-port:
+    name: Match runner GRUB source and test Ventoy overlay
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out experimental Ventoy sources
+        uses: actions/checkout@v4
+
+      - name: Prepare distribution GRUB source access
+        run: |
+          set -eu
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            grub-common grub-efi-amd64-bin dpkg-dev ca-certificates curl xz-utils patch
+          grub-mkimage --version
+          dpkg-query -W grub-common grub-efi-amd64-bin
+
+      - name: Fetch installed distribution GRUB source and reference baseline
+        run: |
+          set -eu
+          source_name=$(dpkg-query -W -f='${source:Package}' grub-common)
+          source_version=$(dpkg-query -W -f='${Version}' grub-common)
+          test -n "$source_name"
+          test -n "$source_version"
+
+          mkdir -p "$RUNNER_TEMP/grub-sources"
+          cd "$RUNNER_TEMP/grub-sources"
+          apt-get source "$source_name=$source_version"
+
+          # This tarball is only the original reference to derive the
+          # Ventoy overlay diff, never the distribution build input.
+          curl -fL --retry 3 --connect-timeout 15 \
+            https://ftp.gnu.org/gnu/grub/grub-2.04.tar.xz \
+            -o grub-2.04.tar.xz
+          tar -xJf grub-2.04.tar.xz
+
+          distro=$(find "$PWD" -mindepth 1 -maxdepth 1 -type d \
+            -name 'grub2-*' -print -quit)
+          test -n "$distro"
+          test -s "$distro/configure.ac"
+
+          {
+            printf 'source_name=%s\n' "$source_name"
+            printf 'source_version=%s\n' "$source_version"
+            printf 'distro_source=%s\n' "$distro"
+            printf 'reference_tar_sha256=%s\n' "$(sha256sum grub-2.04.tar.xz | awk '{print $1}')"
+            printf 'runner_image=%s\n' "$ImageOS"
+            printf 'runner_image_version=%s\n' "$ImageVersion"
+            printf 'commit=%s\n' "$GITHUB_SHA"
+          } | tee "$RUNNER_TEMP/grub-source-provenance.txt"
+
+          printf '%s\n' "$distro" > "$RUNNER_TEMP/distro-grub-source-path.txt"
+
+      - name: Check source-level Ventoy port on the distribution version
+        run: |
+          set -eu
+          distro=$(cat "$RUNNER_TEMP/distro-grub-source-path.txt")
+          sh GRUB2/port-runner-grub.sh \
+            "$RUNNER_TEMP/grub-sources/grub-2.04" \
+            "$distro" \
+            "$RUNNER_TEMP/ventoy-grub-port"
+
+      - name: Upload source-port evidence, including failed diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ventoy-grub-source-port-diagnostics
+          path: |
+            ${{ runner.temp }}/grub-source-provenance.txt
+            ${{ runner.temp }}/ventoy-grub-port/port-status.txt
+            ${{ runner.temp }}/ventoy-grub-port/port-check.log
+            ${{ runner.temp }}/ventoy-grub-port/port-apply.log
+            ${{ runner.temp }}/ventoy-grub-port/ventoy-source-delta.patch
+          if-no-files-found: warn
+          retention-days: 30
