@@ -1,0 +1,87 @@
+name: Probe Ubuntu GRUB for m-boot secondary
+
+on:
+  push:
+    branches:
+      - m-boot-secondary-uefi
+    paths:
+      - .github/workflows/probe-secondary-grub.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  grub-host-compatibility:
+    name: Inspect distribution GRUB (not a Ventoy build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the experimental Ventoy fork
+        uses: actions/checkout@v4
+
+      - name: Install GRUB from the runner distribution
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            grub-common grub-efi-amd64-bin
+          grub-mkimage --version
+          dpkg-query -W grub-common grub-efi-amd64-bin
+
+      - name: Check stock GRUB toolchain and document the Ventoy port boundary
+        run: |
+          set -eu
+
+          modules=/usr/lib/grub/x86_64-efi
+          report="$RUNNER_TEMP/GRUB-RUNNER-COMPATIBILITY.txt"
+          output="$RUNNER_TEMP/stock-grub-baseline.efi"
+
+          test -s "$modules/normal.mod"
+          test -s "$modules/fat.mod"
+          test -s "$modules/part_gpt.mod"
+          test -s "$modules/configfile.mod"
+          test -f GRUB2/MOD_SRC/grub-2.04/grub-core/ventoy/ventoy_cmd.c
+
+          # Validate the actual host mkimage against its matching module tree.
+          # This image is deliberately NOT a Ventoy bootloader or release.
+          grub-mkimage --directory "$modules" \
+            --format x86_64-efi \
+            --prefix '(,2)/ventoy-secondary/grub' \
+            --output "$output" \
+            fat part_gpt normal configfile
+          test -s "$output"
+          file "$output"
+
+          if test -s "$modules/ventoy.mod"
+          then
+            ventoy_module=present-unverified
+          else
+            ventoy_module=missing-port-required
+          fi
+
+          {
+            printf 'scope=runner-stock-grub-probe-only\n'
+            printf 'source_commit=%s\n' "$GITHUB_SHA"
+            printf 'runner_image=%s\n' "$ImageOS"
+            printf 'runner_image_version=%s\n' "$ImageVersion"
+            printf 'host_arch=%s\n' "$(uname -m)"
+            printf 'grub_mkimage=%s\n' "$(grub-mkimage --version)"
+            dpkg-query -W -f='package=${binary:Package} version=${Version}\n' \
+              grub-common grub-efi-amd64-bin
+            printf 'stock_grub_efi_sha256=%s\n' "$(sha256sum "$output" | awk '{print $1}')"
+            printf 'ventoy_module=%s\n' "$ventoy_module"
+            printf 'ventoy_secondary_release_ready=no\n'
+          } | tee "$report"
+
+          # Do not upload the stock EFI image as a Ventoy artifact.
+          rm -- "$output"
+
+      - name: Upload runner compatibility evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ventoy-secondary-grub-runner-probe
+          path: ${{ runner.temp }}/GRUB-RUNNER-COMPATIBILITY.txt
+          if-no-files-found: error
+          retention-days: 30
