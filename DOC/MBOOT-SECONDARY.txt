@@ -1,6 +1,6 @@
 m-boot secondary UEFI integration — experimental fork work
 =======================================================
-Status: original Ventoy metadata and diagnostic GRUB-to-EFI memory bridge proved; NOT an OS boot
+Status: original EDK2 virtual CD and actual ISO-contained EFI StartImage proved under disposable OVMF; NOT an OS installer boot
 Base: ventoy/Ventoy master 74cff34240dca6991b79c6656770670da7b0c39e
 
 Goal
@@ -288,14 +288,14 @@ Known limits / do not claim yet
   incompatible Ventoy GRUB core API calls (EFI buffer, virtual-link,
   filesystem/blocklist, GRUB exit and GUID interfaces). This is NOT
   a successful Ventoy module build, firmware boot or release artifact.
-- Independent module insmod, real FAT32 and ext4 ISO source reads,
-  raw-disk file-sector reconstruction, and native Ventoy image-location
-  ABI formation have passed. The complete Ventoy ISO chainloader/EFI
-  executable has NOT been rebuilt or booted from m-boot; no handoff
-  to the ORIGINAL Ventoy EFI app, installer/root mount, ARM64,
-  Secure Boot or physical USB validation.
-  These diagnostic ISO9660 files are NON-BOOTABLE and must not be
-  counted as Proxmox or TrueNAS boots.
+- At the earlier source-only checkpoint, independent module insmod,
+  FAT32/ext4 reads and native ABI formation passed, but the ORIGINAL
+  Ventoy EFI runtime was not yet exercised. Later genuine VentoyEfiMain
+  GPT, BlockIo and ISO-contained EFI StartImage successes are recorded
+  below. No installer/root mount, ARM64, Secure Boot or physical USB
+  validation has since been established. Earlier diagnostic ISO9660
+  files were nonbootable; the later bootable EFI test ISO contains a
+  dedicated probe application, NOT a Proxmox or TrueNAS installer.
 - GRUB 2.04 is no longer the chosen build/release version; the old Ventoy
   overlay cannot be linked with current Ubuntu GRUB without a source port.
   Use a named runner OS image, not ubuntu-latest, and record actual package
@@ -334,10 +334,9 @@ Original env_param ABI handoff diagnostic (experimental):
   calls the live GRUB getter through the upstream structure's first field;
   it requires the real source GPT GUID in GRUB env to match its own
   independent EFI-side GPT validation. No mock callback is used.
-- The GNU-EFI consumer is NOT the original Ventoy EDK2 app. Building and
-  exercising unmodified VentoyEfiMain/VentoyProtocol.c with this ABI,
-  implementing secondary real-disk validation in that app, and then
-  boot-catalog/installer handoff remain explicit next steps.
+- This GNU-EFI consumer is NOT the original Ventoy EDK2 app. Its
+  original-ABI test preceded the authentic VentoyEfiMain runtime proof
+  documented below; actual installer/kernel handoff remains pending.
 
 Original EDK2 build experiment:
 - .github/workflows/probe-original-ventoy-edk2.yml retrieves pinned
@@ -379,4 +378,52 @@ Original EDK2 runtime source selection on disposable UEFI (experimental):
   GPT GUID: the real app returned vt_original_source_probe=rejected,
   proving this fixture does not silently select the same-MBR competing disk.
   Diagnostic GRUB module CI run 41660901189 on the same commit also SUCCESS.
-  No original virtual-CD/boot-catalog or installer boot was exercised.
+  In THAT earlier source-only run, no original virtual-CD/boot-catalog
+  or installer boot was exercised. The newer virtual-CD and EFI loader
+  tests are recorded below.
+
+Authentic EDK2 virtual CD, ISO filesystem and EFI StartImage proof:
+- The optional mboot_media_probe=1 follows the previously authenticated
+  original VentoyEfiMain + GRUB env_param + real GPT source path. It calls
+  the ORIGINAL VentoyProtocol.c ventoy_install_blockio and published
+  ReadBlocks callbacks, reads every 2048-byte ISO block from real source
+  chunk extents, calculates CRC32, checks against independent host zlib
+  CRC32, disconnects and uninstalls the ORIGINAL published UEFI BlockIo
+  protocol before returning to GRUB. The original normal Ventoy path is
+  not changed; these probes remain strictly opt-in.
+- GitHub Actions run 41675596242 on 8af8225e638149d81c6c99b29bb88ea0651b55a5
+  completed SUCCESS: FAT32 GPT1 and ext4 GPT3 original virtual CD full
+  CRC32 read and teardown. GNU-EFI diagnostic and source-only cases
+  remain independently covered in the same workflow.
+- The optional mboot_boot_probe=1 additionally uses the ACTUAL Ventoy
+  ISO9660 EFI filesystem driver binary (INSTALL/ventoy/iso9660_x64.efi),
+  loaded from the separate m-boot-style ESP, then the original Ventoy
+  EDK2 virtual BlockIo and the original ventoy_boot/StartImage path.
+- The self-contained xorriso ISO is a GENUINE EFI El Torito image: its
+  boot record, validation entry checksum, platform 0xef, bootability flag
+  and boot image LBA are independently checked. A GNU-EFI application
+  actually resides at /EFI/BOOT/BOOTX64.EFI INSIDE the ISO. It prints
+  VT_ORIGINAL_ISO_EFI_STARTIMAGE_EXECUTED from its own efi_main only
+  AFTER Ventoy's StartImage transfers to it; the harness separately
+  checks the original EFI filesystem driver, real virtual-CD full CRC32,
+  return status, protocol teardown and return to stock GRUB.
+- Exact GitHub Actions run 41677439199 on fork code revision
+  076e20141713485701b8ee71db0122e045a5244b SUCCESS: original source
+  positive FAT32 GPT1 and ext4 GPT3, negative wrong GPT GUID, original
+  full virtual-CD CRC32 and teardown for both FAT32 and ext4 GPT3,
+  and authentic EFI StartImage from the El Torito ISO on fragmented FAT32.
+  The bootable ISO was 6,365,184 bytes on two physically discontiguous
+  extents (one discontinuity). Independent full-byte reconstructed source
+  SHA256 was ea6cd67d90af678ef73830dd3e2be2f0b236a302e6d83ef9f111e8234e1246d6.
+  Stock-GRUB diagnostic regression CI run 41677439219 on the same commit
+  also SUCCESS. Run 41676728570 before the fixture correction FAILED
+  only because the larger ISO had a contiguous extent map; corrected
+  in new forward-only commit 076e2014 without weakening the assertion.
+- Scope is STILL experimental: this proves a real ISO-contained EFI
+  application ran, NOT an actual Proxmox/TrueNAS bootloader+kernel,
+  post-kernel ISO discovery, installer mount, or hardware boot. The
+  El Torito catalog was verified independently as fixture content;
+  the original Ventoy chain->boot_catalog field is not yet populated
+  or shown to be consumed by this secondary flow. Full original Ventoy
+  standard-mode regression also remains pending. No m-boot/main,
+  Ventoy/master, original GRUB core, or physical USB modification.
