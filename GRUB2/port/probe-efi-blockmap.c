@@ -29,13 +29,22 @@ disk_read (EFI_BLOCK_IO_PROTOCOL *disk, UINT64 lba, UINTN length, VOID *buf)
 static UINT32
 crc_update (UINT32 crc, const UINT8 *data, UINTN bytes)
 {
+  static UINT32 table[256];
+  static BOOLEAN initialized = FALSE;
   UINTN i, j;
-  for (i = 0; i < bytes; ++i)
+  if (!initialized)
     {
-      crc ^= data[i];
-      for (j = 0; j < 8; ++j)
-        crc = (crc >> 1) ^ ((crc & 1U) ? 0xedb88320U : 0U);
+      for (i = 0; i < 256; ++i)
+        {
+          UINT32 x = (UINT32)i;
+          for (j = 0; j < 8; ++j)
+            x = (x >> 1) ^ ((x & 1U) ? 0xedb88320U : 0U);
+          table[i] = x;
+        }
+      initialized = TRUE;
     }
+  for (i = 0; i < bytes; ++i)
+    crc = (crc >> 8) ^ table[(crc ^ data[i]) & 255U];
   return crc;
 }
 
@@ -93,7 +102,7 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
                               &handles);
   if (EFI_ERROR (status))
     return status;
-  allocation = AllocatePool (8192);
+  allocation = AllocatePool (65536 + 4096);
   if (!allocation)
     {
       status = EFI_OUT_OF_RESOURCES;
@@ -147,19 +156,26 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
           status = EFI_COMPROMISED_DATA;
           goto done;
         }
-      for (sector = begin; sector <= end; ++sector)
+      for (sector = begin; sector <= end;)
         {
+          UINT64 remaining = end - sector + 1;
+          UINTN sectors = remaining > 32 ? 32 : (UINTN)remaining;
+          UINTN read_bytes = sectors * 2048;
           status = disk_read (source, disk_begin + (sector - begin) * 4,
-                              2048, buffer);
+                              read_bytes, buffer);
           if (EFI_ERROR (status))
             goto done;
-          if (sector == 16
-              && (buffer[0] != 1 || CompareMem (buffer + 1, "CD001", 5)))
+          if (sector <= 16 && sector + sectors > 16)
             {
-              status = EFI_COMPROMISED_DATA;
-              goto done;
+              const UINT8 *pvd = buffer + (UINTN)(16 - sector) * 2048;
+              if (pvd[0] != 1 || CompareMem (pvd + 1, "CD001", 5))
+                {
+                  status = EFI_COMPROMISED_DATA;
+                  goto done;
+                }
             }
-          crc = crc_update (crc, buffer, 2048);
+          crc = crc_update (crc, buffer, read_bytes);
+          sector += sectors;
         }
       logical = end + 1;
     }
