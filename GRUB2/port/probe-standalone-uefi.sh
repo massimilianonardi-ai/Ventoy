@@ -263,6 +263,8 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
       "$min_extents" "$part_num" efi
     if ! grep -q 'VT_EFI_MEMORY_HANDOFF_OK' "$output/qemu.log" ||
        ! grep -q 'VT_EFI_BLOCKMAP_OK crc32=' "$output/qemu.log" ||
+       ! grep -q 'VT_EFI_VIRTUAL_BLOCKIO_OK crc32=' "$output/qemu.log" ||
+       ! grep -q 'VT_EFI_VIRTUAL_BLOCKIO_UNINSTALLED' "$output/qemu.log" ||
        grep -q 'VTOY_EFI_MEMORY_BRIDGE_FAILED' "$output/qemu.log" ||
        grep -q 'VT_EFI_BLOCKMAP_FAILED' "$output/qemu.log"; then
       echo 'efi_memory_bridge=failed' >&2
@@ -271,6 +273,8 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
     fi
     echo 'efi_memory_bridge=passed' >> "$output/runtime-result.txt"
     echo 'efi_blockio_full_iso_crc32=verified' >> "$output/runtime-result.txt"
+    echo 'efi_virtual_blockio_crc32=verified' >> "$output/runtime-result.txt"
+    echo 'efi_virtual_blockio_uninstalled=verified' >> "$output/runtime-result.txt"
   else
     python3 "$(dirname "$0")/verify-extent-map.py" \
       "$output/qemu.log" "$output/vt-map-image.iso" \
