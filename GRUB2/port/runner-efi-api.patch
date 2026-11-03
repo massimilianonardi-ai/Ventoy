@@ -9,7 +9,7 @@
          { 0x05ad34ba, 0x6f02, 0x4214, {0x95, 0x2e, 0x4d, 0xa0, 0x39, 0x8e, 0x2b, 0xb9 } };
  
      for (i = 0; i < grub_efi_system_table->num_table_entries; i++)
-@@ -404,42 +404,46 @@ int ventoy_set_sb_policy(void)
+@@ -404,21 +404,22 @@ int ventoy_set_sb_policy(void)
  static void ventoy_get_uefi_sb(void)
  {
      grub_uint8_t secure_boot = 0;
@@ -63,7 +63,7 @@
  typedef const char *(*grub_env_read_hook_t) (struct grub_env_var *var,
 --- a/grub-core/kern/env.c
 +++ b/grub-core/kern/env.c
-@@ -22,6 +22,9 @@
+@@ -22,5 +22,8 @@
  #include <grub/misc.h>
  #include <grub/mm.h>
  
