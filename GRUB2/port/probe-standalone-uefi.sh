@@ -111,7 +111,7 @@ with open(sys.argv[1], "wb") as stream:
     for index in range(4096):
         stream.write(hashlib.sha256(index.to_bytes(4, "big")).digest() * 16)
 PY
-xorriso -as mkisofs -quiet -R -J -V VTOY_MAP_TEST \
+xorriso -as mkisofs -quiet -no-pad -R -J -V VTOY_MAP_TEST \
   -o "$output/vt-map-image.iso" "$output/iso-content" \
   > "$output/xorriso.log" 2>&1
 
@@ -141,7 +141,7 @@ with open(sys.argv[1], "r+b") as stream:
 PY
 xorriso -indev "$output/vt-map-image.iso" -pvd_info \
   >> "$output/xorriso.log" 2>&1
-xorriso -indev "$output/vt-map-image.iso" -extract /payload.bin \
+xorriso -osirrox on -indev "$output/vt-map-image.iso" -extract /payload.bin \
   "$output/extracted-payload.bin" >> "$output/xorriso.log" 2>&1
 cmp "$output/iso-content/payload.bin" "$output/extracted-payload.bin"
 
