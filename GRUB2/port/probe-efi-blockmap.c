@@ -140,6 +140,32 @@ vt_check_efi_blockmap (EFI_SYSTEM_TABLE *system, const UINT8 *chain,
       if (CompareMem (buffer + 0x180, chain + 17, 16)
           || CompareMem (buffer + 0x1b8, chain + 481, 4))
         continue;
+
+      /* The legacy MBR identity can be identical on two synthetic GPT
+       * disks. Validate the actual mapped ISO PVD before selecting the
+       * unique backing device; never select arbitrarily on a collision.
+       */
+      {
+        UINTN j;
+        BOOLEAN pvd_found = FALSE;
+        for (j = 0; j < count; ++j)
+          {
+            const UINT8 *entry = chain + 2616 + j * 24;
+            UINT64 first = word (entry, 4);
+            UINT64 last = word (entry + 4, 4);
+            if (first <= 16 && 16 <= last)
+              {
+                UINT64 physical = word (entry + 8, 8) + (16 - first) * 4;
+                status = disk_read (candidate, physical, 2048, buffer);
+                if (!EFI_ERROR (status) && buffer[0] == 1
+                    && !CompareMem (buffer + 1, "CD001", 5))
+                  pvd_found = TRUE;
+                break;
+              }
+          }
+        if (!pvd_found)
+          continue;
+      }
       source = candidate;
       ++matches;
     }
