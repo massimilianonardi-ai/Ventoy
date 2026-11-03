@@ -9,6 +9,7 @@ on:
       - GRUB2/port/probe-extents.c
       - GRUB2/port/probe-handoff.c
       - GRUB2/port/probe-efi-app.c
+      - GRUB2/port/probe-efi-blockmap.c
       - GRUB2/port/build-efi-handoff-probe.sh
       - GRUB2/port/verify-extent-map.py
       - GRUB2/port/probe-standalone-module.sh
@@ -74,7 +75,8 @@ jobs:
             qemu-system-x86 ovmf mtools gdisk dosfstools xorriso e2fsprogs
           sh GRUB2/port/probe-standalone-uefi.sh \
             "$RUNNER_TEMP/standalone-source-probe/source/grub-core/ventoy_source_probe.mod" \
-            "$RUNNER_TEMP/standalone-uefi-probe" fat32
+            "$RUNNER_TEMP/standalone-uefi-probe" fat32 \
+            "$RUNNER_TEMP/standalone-efi-consumer/VTOYDIAG.EFI"
           sh GRUB2/port/probe-standalone-uefi.sh \
             "$RUNNER_TEMP/standalone-source-probe/source/grub-core/ventoy_source_probe.mod" \
             "$RUNNER_TEMP/standalone-uefi-ext4-probe" ext4
