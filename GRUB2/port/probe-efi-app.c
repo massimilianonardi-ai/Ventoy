@@ -107,6 +107,8 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
   UINTN bytes;
   CHAR8 message[] = "VT_EFI_MEMORY_HANDOFF_OK\r\n";
 
+  InitializeLib (image, system);
+
   status = uefi_call_wrapper (system->BootServices->HandleProtocol, 3,
                               image, &loaded_guid, (VOID **)&loaded);
   if (EFI_ERROR (status))
@@ -120,6 +122,11 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
   if (EFI_ERROR (status) || !serial)
     return EFI_NOT_FOUND;
 
+  {
+    CHAR8 begin[] = "VT_EFI_BLOCKMAP_BEGIN\r\n";
+    bytes = sizeof (begin) - 1;
+    uefi_call_wrapper (serial->Write, 3, serial, &bytes, begin);
+  }
   status = vt_check_efi_blockmap (system, chain, chain_length, serial);
   if (EFI_ERROR (status))
     {
