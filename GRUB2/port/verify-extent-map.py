@@ -62,24 +62,26 @@ def main():
     checked(2 <= len(records) <= 16384,
             f"expected fragmented ISO and bounded map; extents={len(records)}")
 
-    image = iso_path.read_bytes()
-    checked(image[32769:32774] == b"CD001",
-            "input is not an ISO9660 image")
-    checked(len(image) == expected_size and len(image) % 2048 == 0,
+    image_bytes = iso_path.stat().st_size
+    checked(image_bytes == expected_size and image_bytes % 2048 == 0,
             "ISO size does not match GRUB or ISO9660 sector alignment")
+
     offset = 0
     previous_physical_end = None
     reconstructed = hashlib.sha256()
-    original = hashlib.sha256(image).hexdigest()
+    original = hashlib.sha256()
     discontinuities = 0
 
-    with disk_path.open("rb") as disk:
+    # Stream at most 1 MiB at a time, even for large installation ISOs.
+    with iso_path.open("rb") as image, disk_path.open("rb") as disk:
+        image.seek(32769)
+        checked(image.read(5) == b"CD001", "input is not an ISO9660 image")
         partition_start, partition_end = gpt_first_partition_range(disk)
         disk.seek(0, 2)
         disk_bytes = disk.tell()
-        for ix, logical, physical, size in records:
-            checked(ix == records.index((ix, logical, physical, size)),
-                    "non-sequential extent index")
+
+        for expected_index, (ix, logical, physical, size) in enumerate(records):
+            checked(ix == expected_index, "non-sequential extent index")
             checked(logical == offset and size > 0,
                     "ISO map is not complete and sequential")
             checked(physical % 512 == 0 and logical % 512 == 0,
@@ -92,26 +94,37 @@ def main():
                 checked(physical != previous_physical_end,
                         "contiguous physical extents should have merged")
                 discontinuities += 1
+
+            image.seek(offset)
             disk.seek(physical)
-            data = disk.read(size)
-            checked(len(data) == size, "truncated disk extent")
-            checked(data == image[offset:offset + size],
-                    f"raw disk mismatch at ISO byte {offset}")
-            reconstructed.update(data)
+            unread = size
+            while unread:
+                wanted = min(unread, 1024 * 1024)
+                source = image.read(wanted)
+                raw = disk.read(wanted)
+                checked(len(source) == wanted and len(raw) == wanted,
+                        "truncated source ISO or raw disk extent")
+                checked(source == raw,
+                        f"raw disk mismatch at ISO byte {offset + size - unread}")
+                original.update(source)
+                reconstructed.update(raw)
+                unread -= wanted
+
             offset += size
             previous_physical_end = physical + size
 
-    checked(offset == len(image), "extent coverage does not reach EOF")
-    checked(reconstructed.hexdigest() == original, "reconstructed SHA256 mismatch")
+    checked(offset == image_bytes, "extent coverage does not reach EOF")
+    checked(reconstructed.digest() == original.digest(),
+            "reconstructed SHA256 mismatch")
     checked(discontinuities >= 1, "no fragmentation actually validated")
     result = (
         "iso_map_verification=passed\n"
         "iso_format=iso9660\n"
         "source_disk=hd1,gpt1\n"
-        f"image_bytes={len(image)}\n"
+        f"image_bytes={image_bytes}\n"
         f"extent_count={len(records)}\n"
         f"physical_discontinuities={discontinuities}\n"
-        f"source_sha256={original}\n"
+        f"source_sha256={original.hexdigest()}\n"
         f"reconstructed_sha256={reconstructed.hexdigest()}\n"
         "checked_bytes=all\n"
         "grub_core_patched=no\n"
