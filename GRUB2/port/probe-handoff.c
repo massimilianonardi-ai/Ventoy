@@ -9,7 +9,23 @@
 #include <grub/mm.h>
 #include <grub/misc.h>
 #include <grub/err.h>
+#include <grub/env.h>
 #include <grub/ventoy.h>
+
+/* Retain until the GRUB module is unloaded; EFI StartImage can copy
+ * this buffer while GRUB is still resident. Not a runtime services buffer. */
+static ventoy_chain_head *vt_pending_chain;
+
+void vt_release_handoff_probe (void);
+
+void
+vt_release_handoff_probe (void)
+{
+  grub_free (vt_pending_chain);
+  vt_pending_chain = 0;
+  grub_env_unset ("vt_probe_chain_addr");
+  grub_env_unset ("vt_probe_chain_size");
+}
 
 grub_err_t vt_probe_handoff (grub_file_t file, const char *path,
                             const ventoy_img_chunk *chunks,
@@ -40,6 +56,7 @@ vt_probe_handoff (grub_file_t file, const char *path,
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid ISO path");
   relative = end + 1;
 
+  vt_release_handoff_probe ();
   disk = grub_disk_open (file->device->disk->name);
   if (!disk)
     return grub_errno;
@@ -113,6 +130,18 @@ vt_probe_handoff (grub_file_t file, const char *path,
         grub_printf ("%02x", (unsigned) raw[i * 16 + j]);
       grub_printf ("\n");
     }
+  {
+    char addr[40];
+    char size[40];
+    grub_snprintf (addr, sizeof (addr), "0x%llx",
+                   (unsigned long long) (grub_addr_t) chain);
+    grub_snprintf (size, sizeof (size), "%llu",
+                   (unsigned long long) length);
+    grub_env_set ("vt_probe_chain_addr", addr);
+    grub_env_set ("vt_probe_chain_size", size);
+    vt_pending_chain = chain;
+    chain = 0; /* owned by module until next mapping / module teardown */
+  }
   grub_printf ("VT_HANDOFF_PREPARED efi_invoke=no catalog_unverified=yes\n");
 
 done:
