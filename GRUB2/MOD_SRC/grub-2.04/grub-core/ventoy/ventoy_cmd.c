@@ -501,13 +501,11 @@ static int ventoy_load_efiboot_template(char **buf, int *datalen, int *direntoff
 
     if (g_mboot_secondary_valid)
     {
-        file = ventoy_grub_file_open(GRUB_FILE_TYPE_LINUX_INITRD,
-                                     "%s/ventoy_efiboot.img.xz", ventoy_get_env("vtoy_path"));
+        file = ventoy_grub_file_open(GRUB_FILE_TYPE_LINUX_INITRD, "%s/ventoy_efiboot.img.xz", ventoy_get_env("vtoy_path"));
     }
     else
     {
-        file = ventoy_grub_file_open(GRUB_FILE_TYPE_LINUX_INITRD,
-                                     "%s/ventoy/ventoy_efiboot.img.xz", ventoy_get_env("vtoy_efi_part"));
+        file = ventoy_grub_file_open(GRUB_FILE_TYPE_LINUX_INITRD, "%s/ventoy/ventoy_efiboot.img.xz", ventoy_get_env("vtoy_efi_part"));
     }
     if (file == NULL)
     {
