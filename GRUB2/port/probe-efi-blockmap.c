@@ -5,7 +5,7 @@
 #include <efilib.h>
 
 static VOID
-note (EFI_SERIAL_IO_PROTOCOL *serial, const CHAR8 *message, UINTN length)
+note (EFI_SERIAL_IO_PROTOCOL *serial, const char *message, UINTN length)
 {
   if (serial)
     uefi_call_wrapper (serial->Write, 3, serial, &length, (VOID *)message);
