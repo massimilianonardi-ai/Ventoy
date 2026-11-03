@@ -1,6 +1,6 @@
 m-boot secondary UEFI integration — experimental fork work
 =======================================================
-Status: GRUB 2.12 partial module compile probes, NOT a full build or boot test
+Status: independent .mod built and real fragmented ISO9660 extent map verified in OVMF; NOT an OS boot
 Base: ventoy/Ventoy master 74cff34240dca6991b79c6656770670da7b0c39e
 
 Goal
@@ -172,6 +172,41 @@ Actual independent-module proof (Ubuntu 24.04 runner, 2026-11-03)
   UEFI virtual CD, Proxmox/TrueNAS boot, kernel/initramfs handoff,
   Secure Boot, ARM64 or actual m-boot product integration.
 
+Real fragmented ISO extent-mapping proof (2026-11-03)
+--------------------------------------------------
+- On experimental fork branch, GRUB2/port/probe-extents.c implements
+  vt_extent_probe in the existing dynamically loaded source-probe .mod.
+  It validates a real ISO9660 primary volume descriptor, reads the file
+  through stock GRUB filesystem APIs with the exact 2.12 disk read-hook
+  ABI, merges contiguous byte ranges and reports logical ISO offsets
+  and absolute disk offsets. There are no GRUB core edits and no VLNK.
+  This remains DIAGNOSTIC code, not the Ventoy chainloader.
+- The hook's sector argument is ALREADY an absolute whole-disk sector
+  in tested GRUB 2.12; do not add the GPT start LBA again. The first
+  fragmented test showed a false one-partition offset; our independent
+  raw-GPT verifier rejected it. GRUB2/port/verify-extent-map.py checks
+  each reported physical byte range is inside the actual GPT partition
+  and byte-equal to the original ISO; all mapped byte ranges must cover
+  the entire image in order and have at least one physical discontinuity.
+- QEMU fixture is a true ISO9660 filesystem produced by xorriso with
+  deterministic nonuniform content. A and C filler plus a tail-filling
+  file deliberately force the ISO to occupy two noncontiguous extents
+  on the SECOND GPT disk. The ISO has no bootloader and has not been
+  booted; it is NOT a Proxmox or TrueNAS installation image.
+- GitHub Actions run 41617152860 at fork SHA
+  dc6acc482208754e4637814dab036e309012ab40 PASSED. GRUB .mod
+  compiled against runner GRUB 2.12-1ubuntu7.3 without compiling or
+  patching core, OVMF booted standard GRUB, and insmod loaded it.
+  Independent reconstruction verified ISO=2,471,936 bytes, two extents,
+  one discontinuity, every byte equal, matching raw-disk and source
+  SHA-256 d81a159af3486d48009fff44497631de3163eef350eecf47861b7d8ec97d7ef3.
+  No physical disk was used. Neither m-boot main nor Ventoy master changed.
+- Test scope: one true ISO9660 filesystem on FAT32 on an extra GPT
+  virtual disk. No ext4/exFAT, sparse-file handling, large multi-GB ISO,
+  EFI virtual CD or installer/root mount is validated yet. The mapper
+  returns byte extents rather than Ventoy's final firmware-sector-map
+  ABI; compatibility conversion and OS handoff remain open.
+
 Known limits / do not claim yet
 -------------------------------
 - GitHub Actions source-compile probe `41600842303` applied all three
@@ -179,11 +214,13 @@ Known limits / do not claim yet
   incompatible Ventoy GRUB core API calls (EFI buffer, virtual-link,
   filesystem/blocklist, GRUB exit and GUID interfaces). This is NOT
   a successful Ventoy module build, firmware boot or release artifact.
-- The experimental module's OVMF/GRUB insmod and cross-disk metadata
-  proof HAS succeeded, but a complete custom Ventoy engine/EFI ISO
-  chainloader has NOT compiled or booted under m-boot. There is still no
-  installer mount, ARM64 boot, Secure Boot or physical USB validation.
-  Do not mistake the 44-byte .iso-named fixture for a real ISO.
+- The experimental module's OVMF/GRUB insmod, cross-disk file
+  metadata, AND mapping of a true fragmented ISO9660 filesystem have
+  passed independent tests. A complete Ventoy engine/EFI ISO chainloader
+  has NOT compiled or booted under m-boot; no installer mount, ARM64 boot,
+  Secure Boot or physical USB validation. Neither the earlier 44-byte
+  dummy .iso-named fixture NOR the new non-bootable ISO9660 test image
+  proves a real ISO operating-system boot.
 - GRUB 2.04 is no longer the chosen build/release version; the old Ventoy
   overlay cannot be linked with current Ubuntu GRUB without a source port.
   Use a named runner OS image, not ubuntu-latest, and record actual package
