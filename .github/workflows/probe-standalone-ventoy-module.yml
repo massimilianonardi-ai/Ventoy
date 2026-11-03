@@ -70,6 +70,9 @@ jobs:
           sh GRUB2/port/probe-standalone-uefi.sh \
             "$RUNNER_TEMP/standalone-source-probe/source/grub-core/ventoy_source_probe.mod" \
             "$RUNNER_TEMP/standalone-uefi-ext4-probe" ext4
+          sh GRUB2/port/probe-standalone-uefi.sh \
+            "$RUNNER_TEMP/standalone-source-probe/source/grub-core/ventoy_source_probe.mod" \
+            "$RUNNER_TEMP/standalone-uefi-gpt3-probe" ext4-gpt3
 
       - name: Upload module build evidence only (not a Ventoy release)
         if: always()
@@ -94,6 +97,11 @@ jobs:
             ${{ runner.temp }}/standalone-uefi-ext4-probe/iso-map-verification.txt
             ${{ runner.temp }}/standalone-uefi-ext4-probe/iso-ext4.log
             ${{ runner.temp }}/standalone-uefi-ext4-probe/iso-ext4-extents.log
+            ${{ runner.temp }}/standalone-uefi-gpt3-probe/runtime-result.txt
+            ${{ runner.temp }}/standalone-uefi-gpt3-probe/iso-map-verification.txt
+            ${{ runner.temp }}/standalone-uefi-gpt3-probe/iso-ext4-extents.log
+            ${{ runner.temp }}/standalone-uefi-gpt3-probe/qemu.log
+            ${{ runner.temp }}/standalone-uefi-gpt3-probe/iso-gpt.log
             ${{ runner.temp }}/standalone-uefi-ext4-probe/qemu.log
           retention-days: 30
           if-no-files-found: warn
