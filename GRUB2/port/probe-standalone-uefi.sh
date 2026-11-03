@@ -332,7 +332,10 @@ if [ "$source_fs" = fat32 ]; then
   truncate -s 1M "$output/filler-C.bin"
   truncate -s 58M "$output/filler-D.bin"
   if [ "$efi_mode" = original-boot ]; then
-    truncate -s 50M "$output/filler-D.bin"
+    # The El Torito fixture is larger than the normal ISO. Force it to
+    # cross the freed B hole AND a limited final free span, rather than
+    # allowing a contiguous fit into a much larger tail.
+    truncate -s 54M "$output/filler-D.bin"
   fi
   mcopy -i "$output/iso-part.img" "$output/filler-A.bin" ::/A.FILL
   mcopy -i "$output/iso-part.img" "$output/filler-B.bin" ::/B.FILL
