@@ -130,8 +130,17 @@ efi_main (EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
   status = vt_check_efi_blockmap (system, chain, chain_length, serial);
   if (EFI_ERROR (status))
     {
-      CHAR8 failed[] = "VT_EFI_BLOCKMAP_FAILED\r\n";
-      bytes = sizeof (failed) - 1;
+      static const CHAR8 hex[] = "0123456789abcdef";
+      static const CHAR8 prefix[] = "VT_EFI_BLOCKMAP_FAILED status=0x";
+      CHAR8 failed[sizeof (prefix) + 16 + 2];
+      UINTN i;
+      CopyMem (failed, prefix, sizeof (prefix) - 1);
+      for (i = 0; i < 16; ++i)
+        failed[sizeof (prefix) - 1 + i] =
+          hex[((UINT64)status >> ((15 - i) * 4)) & 15U];
+      bytes = sizeof (prefix) - 1 + 16;
+      failed[bytes++] = '\r';
+      failed[bytes++] = '\n';
       uefi_call_wrapper (serial->Write, 3, serial, &bytes, failed);
       return status;
     }
