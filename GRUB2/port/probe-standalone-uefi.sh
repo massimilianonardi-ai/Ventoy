@@ -115,9 +115,13 @@ xorriso -indev "$output/vt-map-image.iso" -pvd_info \
 truncate -s 1M "$output/filler-A.bin"
 truncate -s 1536K "$output/filler-B.bin"
 truncate -s 1M "$output/filler-C.bin"
+truncate -s 58M "$output/filler-D.bin"
 mcopy -i "$output/iso-part.img" "$output/filler-A.bin" ::/A.FILL
 mcopy -i "$output/iso-part.img" "$output/filler-B.bin" ::/B.FILL
 mcopy -i "$output/iso-part.img" "$output/filler-C.bin" ::/C.FILL
+# Fill the tail BEFORE freeing B, so neither of the remaining free
+# areas can contain the full ISO. The ISO must cross a physical gap.
+mcopy -i "$output/iso-part.img" "$output/filler-D.bin" ::/D.FILL
 mdel -i "$output/iso-part.img" ::/B.FILL
 mcopy -i "$output/iso-part.img" "$output/vt-map-image.iso" ::/vt-map-image.iso
 
