@@ -14,6 +14,7 @@
 #include <grub/mm.h>
 #include <grub/misc.h>
 #include <grub/err.h>
+#include <grub/ventoy.h>
 
 #define VT_MAP_READ_BUFFER 32768U
 #define VT_MAP_MAX_EXTENTS 16384U
@@ -139,6 +140,139 @@ vt_map_is_iso9660 (grub_file_t file)
   return grub_memcmp (signature, "CD001", 5) == 0;
 }
 
+/*
+ * Convert ONLY verified, 2048-byte-aligned file fragments to Ventoy's
+ * upstream ABI. The original ventoy.h is copied verbatim at build time.
+ * No patched GRUB core and no substitute 'Ventoy-like' wire types.
+ *
+ * These two structures are built in GRUB memory, inspected and freed.
+ * Passing them to the independent EFI application remains a SEPARATE,
+ * unimplemented step; this diagnostic does not chainload any ISO.
+ */
+static grub_err_t
+vt_map_build_ventoy (const struct vt_map_context *map, grub_file_t file)
+{
+  grub_uint32_t i;
+  grub_uint64_t next_logical = 0;
+  grub_uint64_t image_sectors;
+  grub_size_t location_bytes;
+  ventoy_img_chunk *chunks = 0;
+  ventoy_image_location *location = 0;
+  ventoy_guid guid = VENTOY_GUID;
+  grub_err_t err = GRUB_ERR_NONE;
+
+  if (file->device->disk->log_sector_size != VT_MAP_SECTOR_BITS
+      || file->size == 0 || (file->size % 2048) != 0
+      || map->count == 0 || map->count > VT_MAP_MAX_EXTENTS)
+    return grub_error (GRUB_ERR_BAD_FS, "unsupported ISO sector geometry");
+
+  image_sectors = (grub_uint64_t) file->size / 2048U;
+  if (image_sectors > 0xffffffffULL)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE,
+                       "ISO exceeds Ventoy 32-bit image-sector limit");
+
+  location_bytes = sizeof (*location)
+                   + (map->count - 1U)
+                     * sizeof (ventoy_image_disk_region);
+  chunks = grub_malloc (map->count * sizeof (*chunks));
+  location = grub_malloc (location_bytes);
+  if (!chunks || !location)
+    {
+      err = grub_error (GRUB_ERR_OUT_OF_MEMORY,
+                        "Ventoy extent allocation failed");
+      goto out;
+    }
+
+  grub_memset (location, 0, location_bytes);
+  location->guid = guid;
+  location->image_sector_size = 2048U;
+  location->disk_sector_size = VT_MAP_SECTOR_SIZE;
+  location->region_count = map->count;
+
+  for (i = 0; i < map->count; ++i)
+    {
+      const struct vt_map_extent *src = &map->extents[i];
+      ventoy_img_chunk *chunk = &chunks[i];
+      ventoy_image_disk_region *region = &location->regions[i];
+      grub_uint64_t image_start;
+      grub_uint64_t image_count;
+      grub_uint64_t disk_start;
+      grub_uint64_t disk_count;
+
+      if (src->logical != next_logical || src->length == 0
+          || (src->logical % 2048U) != 0
+          || (src->physical % 2048U) != 0
+          || (src->length % 2048U) != 0)
+        {
+          err = grub_error (GRUB_ERR_BAD_FS,
+                            "extent cannot represent whole ISO sectors");
+          goto out;
+        }
+
+      image_start = src->logical / 2048U;
+      image_count = src->length / 2048U;
+      disk_start = src->physical / VT_MAP_SECTOR_SIZE;
+      disk_count = src->length / VT_MAP_SECTOR_SIZE;
+
+      if (!image_count || !disk_count
+          || image_start + image_count > image_sectors
+          || image_start + image_count > 0x100000000ULL
+          || disk_start > ~(grub_uint64_t) 0 - disk_count
+          || next_logical > ~(grub_uint64_t) 0 - src->length)
+        {
+          err = grub_error (GRUB_ERR_OUT_OF_RANGE,
+                            "Ventoy extent sector count overflows");
+          goto out;
+        }
+
+      chunk->img_start_sector = (grub_uint32_t) image_start;
+      chunk->img_end_sector =
+        (grub_uint32_t) (image_start + image_count - 1U);
+      chunk->disk_start_sector = disk_start;
+      chunk->disk_end_sector = disk_start + disk_count - 1U;
+
+      region->image_start_sector = chunk->img_start_sector;
+      region->image_sector_count = (grub_uint32_t) image_count;
+      region->disk_start_sector = chunk->disk_start_sector;
+
+      next_logical += src->length;
+    }
+
+  if (next_logical != (grub_uint64_t) file->size)
+    {
+      err = grub_error (GRUB_ERR_BAD_FS,
+                        "Ventoy sector map does not cover whole ISO");
+      goto out;
+    }
+
+  grub_printf ("VT_CHAIN_HEADER count=%u image_sector=2048 disk_sector=512\\n",
+               (unsigned) map->count);
+  for (i = 0; i < map->count; ++i)
+    {
+      const ventoy_img_chunk *chunk = &chunks[i];
+      const ventoy_image_disk_region *region = &location->regions[i];
+
+      grub_printf ("VT_CHAIN_CHUNK i=%u is=%u ie=%u ds=%llu de=%llu\\n",
+                   (unsigned) i,
+                   (unsigned) chunk->img_start_sector,
+                   (unsigned) chunk->img_end_sector,
+                   (unsigned long long) chunk->disk_start_sector,
+                   (unsigned long long) chunk->disk_end_sector);
+      grub_printf ("VT_LOCATION_REGION i=%u is=%u n=%u ds=%llu\\n",
+                   (unsigned) i,
+                   (unsigned) region->image_start_sector,
+                   (unsigned) region->image_sector_count,
+                   (unsigned long long) region->disk_start_sector);
+    }
+  grub_printf ("VT_CHAIN_SUCCESS count=%u image_bytes=%llu\\n",
+               (unsigned) location->region_count,
+               (unsigned long long) file->size);
+out:
+  grub_free (location);
+  grub_free (chunks);
+  return err;
+}
+
 static grub_err_t
 vt_probe_extent_map (grub_command_t cmd __attribute__ ((unused)),
                      int argc, char **args)
@@ -224,6 +358,10 @@ vt_probe_extent_map (grub_command_t cmd __attribute__ ((unused)),
                         "ISO extent coverage incomplete");
       goto out;
     }
+
+  err = vt_map_build_ventoy (&map, file);
+  if (err)
+    goto out;
 
   grub_printf ("VT_MAP_HEADER image_bytes=%llu count=%u disk=%s part=%u\n",
                (unsigned long long) file->size, (unsigned) map.count,
