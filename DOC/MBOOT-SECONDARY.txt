@@ -230,10 +230,11 @@ Native Ventoy ABI conversion and ext4 source proof (2026-11-03)
 - The independent Python verifier now also checks EVERY field in emitted
   ventoy_img_chunk and ventoy_image_disk_region against the previously
   raw-disk-verified file extents, including inclusive end-sector
-  semantics and region count. These diagnostic structs are released
-  after printing; their delivery to the distinct EDK2 Ventoy EFI
-  application has NOT been implemented or validated yet. This is
-  canonical ABI FORMATION, NOT a booting Ventoy chain.
+  semantics and region count. This EARLIER source-only diagnostic
+  freed its structs after printing; the later proof below retains a
+  chain header and passes it to a separate TEST EFI executable, not
+  Ventoy's original EDK2 application. ABI formation and diagnostic
+  transport do NOT constitute a booting Ventoy chain.
 - Experimental workflow .github/workflows/probe-standalone-ventoy-module.yml
   checks TWO scenarios in disposable OVMF: a physically fragmented ISO
   on second-disk FAT32, and a densely allocated ISO on second-disk ext4.
