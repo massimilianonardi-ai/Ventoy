@@ -848,7 +848,8 @@ STATIC EFI_STATUS ventoy_probe_secondary_media(IN EFI_HANDLE ImageHandle)
     if (!g_chain || !gBlockData.pRawBlockIo ||
         !gBlockData.pRawBlockIo->Media ||
         g_chain->virt_img_size_in_bytes == 0 ||
-        g_chain->virt_img_size_in_bytes > 16 * 1024 * 1024 ||
+        (!gMbootBootProbe &&
+         g_chain->virt_img_size_in_bytes > 16 * 1024 * 1024) ||
         (g_chain->virt_img_size_in_bytes % 2048))
     {
         return EFI_UNSUPPORTED;
@@ -882,6 +883,36 @@ STATIC EFI_STATUS ventoy_probe_secondary_media(IN EFI_HANDLE ImageHandle)
         goto cleanup;
     }
     ReadBuf = (UINT8 *)(((UINTN)Allocation + 4095) & ~(UINTN)4095);
+
+    /* The bounded full-ISO CRC remains mandatory for the diagnostic
+     * (including the bootable small ISO regression). A REAL installer
+     * may contain gigabytes. In explicit boot mode, do not require a
+     * multi-gigabyte full read before EFI boot: validate its mapped
+     * ISO9660 primary volume descriptor through the ORIGINAL published
+     * BlockIo, then let the real bootloader access arbitrary sectors.
+     * This is a weaker preboot assertion and must not be reported as
+     * full ISO CRC verification.
+     */
+    if (gMbootBootProbe &&
+        g_chain->virt_img_size_in_bytes > 16 * 1024 * 1024)
+    {
+        Status = Published->ReadBlocks(Published,
+                                       Published->Media->MediaId,
+                                       16, 2048, ReadBuf);
+        if (EFI_ERROR(Status) || ReadBuf[0] != 1 ||
+            CompareMem(ReadBuf + 1, "CD001", 5))
+        {
+            Status = EFI_COMPROMISED_DATA;
+            goto cleanup;
+        }
+        grub_env_set("vt_original_virtual_crc32", "not-computed");
+        grub_env_set("vt_original_virtual_pvd", "verified");
+        Status = ventoy_boot(ImageHandle);
+        grub_env_set("vt_original_boot_probe",
+                     EFI_ERROR(Status) ? "failed" : "returned");
+        goto cleanup;
+    }
+
     for (Lba = 0; Lba < Sectors; )
     {
         UINTN Take = (UINTN)(Sectors - Lba);
