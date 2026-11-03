@@ -45,6 +45,9 @@ Implemented source adaptations on the experimental branch
   and ext4 data volumes for the opt-in alternative, preserves upstream's
   original-device checks for normal Ventoy, and handles the 32 MiB size
   assumption when the alternate layout has been positively verified.
+  In verified secondary mode it reads ventoy_efiboot.img.xz from
+  /ventoy-secondary/ventoy/ and loads checksum.cfg from the GRUB prefix
+  /ventoy-secondary/grub/. Standard Ventoy asset paths stay unchanged.
 - The Ventoy EFI application's ISO9660/UDF driver paths select the nested
   /ventoy-secondary/ventoy/ directory only for the m-boot opt-in.
 
