@@ -238,7 +238,17 @@ jobs:
           test "$first" -ge 2048 && test "$last" -gt "$first"
           bytes=$(( (last-first+1) * 512 ))
           truncate -s "$bytes" "$part"
-          mkfs.ext4 -F -q -d "$RUNNER_TEMP/usb-source-tree" "$part"
+          mkfs.ext4 -F -q "$part"
+          # Test the actual filesystem-copy allocation path. The
+          # mke2fs -d population can create sparse holes in ISO payloads.
+          mkdir -p "$bundle/iso-mounted"
+          sudo mount -t ext4 -o loop "$part" "$bundle/iso-mounted"
+          sudo mkdir -p "$bundle/iso-mounted/m/boot/iso"
+          sudo cp --sparse=never --reflink=never \
+            "$RUNNER_TEMP/usb-source-tree/m/boot/iso/proxmox-ve_9.2-1.iso" \
+            "$bundle/iso-mounted/m/boot/iso/proxmox-ve_9.2-1.iso"
+          sudo sync
+          sudo umount "$bundle/iso-mounted"
           dd if="$part" of="$usb" bs=512 seek="$first" conv=notrunc status=none
           sgdisk --verify "$usb" >> "$bundle/usb-gpt.log"
           before=$(sha256sum "$usb" | awk '{print $1}')
