@@ -436,10 +436,10 @@ if [ "$efi_mode" = linux-handoff ]; then
      grep -q "VT_LINUX_ISO_SHA256=$expected" "$output/qemu.log" &&
      grep -q 'VT_LINUX_ISO_IDENTITY_PASS' "$output/qemu.log" &&
      grep -q 'VT_LINUX_HANDOFF_PASS' "$output/qemu.log"; then
-    printf 'grub_efi_to_linux_dm=passed\\nsource=grub-original-ventoy-extent-map\\nlinux_kernel=unchanged\\n' | tee "$output/runtime-result.txt"
-    python3 "$(dirname "$0")/verify-extent-map.py" \\
-       "$output/qemu.log" "$output/vt-map-image.iso" \\
-       "$output/iso-disk.img" "$output/iso-map-verification.txt" \\
+    printf 'grub_efi_to_linux_dm=passed\nsource=grub-original-ventoy-extent-map\nlinux_kernel=unchanged\n' | tee "$output/runtime-result.txt"
+    python3 "$(dirname "$0")/verify-extent-map.py" \
+       "$output/qemu.log" "$output/vt-map-image.iso" \
+       "$output/iso-disk.img" "$output/iso-map-verification.txt" \
        "$min_extents" "$part_num"
     exit 0
   fi
