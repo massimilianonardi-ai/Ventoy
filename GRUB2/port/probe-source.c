@@ -21,6 +21,8 @@ extern void vt_register_extent_probe (void);
 extern void vt_unregister_extent_probe (void);
 extern void vt_release_handoff_probe (void);
 extern void vt_register_efi_publish_probe (void);
+extern void vt_register_overlay_probe (void);
+extern void vt_unregister_overlay_probe (void);
 extern void vt_unregister_efi_publish_probe (void);
 
 static grub_command_t source_probe_command;
@@ -65,10 +67,12 @@ GRUB_MOD_INIT (ventoy_source_probe)
                            "FILE", "Inspect real image source without VLNK.");
   vt_register_extent_probe ();
   vt_register_efi_publish_probe ();
+  vt_register_overlay_probe ();
 }
 
 GRUB_MOD_FINI (ventoy_source_probe)
 {
+  vt_unregister_overlay_probe ();
   vt_unregister_efi_publish_probe ();
   vt_unregister_extent_probe ();
   vt_release_handoff_probe ();
