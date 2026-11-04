@@ -514,6 +514,41 @@ timeout 90 qemu-system-x86_64 -machine q35 -accel tcg -m 1024 -smp 2 \
 qemu_status=$?
 set -e
 
+if [ "$efi_mode" = original-overlay-boot ]; then
+  # This fixture puts the kernel ONLY inside the original ISO:
+  # outer stock GRUB cannot boot Linux except via the genuine Ventoy
+  # virtual CD and the ISO's own original GRUB EFI executable.
+  if ! grep -q 'VT_MAP_SUCCESS' "$output/qemu.log" ||
+     ! grep -q 'VT_OVERLAY_ABI_READY' "$output/qemu.log" ||
+     ! grep -q 'VT_OVERLAY_PREPARED' "$output/qemu.log" ||
+     ! grep -q 'VT080_ORIGINAL_VENTOY_OVERLAY_BOOT_BEGIN' "$output/qemu.log" ||
+     ! grep -q 'VT079_UEFI_GRUB_STARTED' "$output/qemu.log" ||
+     ! grep -q 'VT079_UEFI_ISO_FOUND' "$output/qemu.log" ||
+     ! grep -q 'VT079_UEFI_KERNEL_STARTING' "$output/qemu.log" ||
+     ! grep -q 'VT079_LINUX_INITRAMFS_OVERLAY' "$output/qemu.log" ||
+     grep -q 'VT079_LINUX_INITRAMFS_ORIGINAL' "$output/qemu.log" ||
+     grep -q 'VT080_ORIGINAL_VENTOY_OVERLAY_BOOT_FAILED' "$output/qemu.log"; then
+    echo "VT080_EFI_ISO_INITRD_OVERLAY_FAILED qemu_status=$qemu_status" >&2
+    tail -n 140 "$output/qemu.log" >&2
+    exit 9
+  fi
+  original=$(sha256sum "$VTOY_BOOTABLE_ISO" | awk '{print $1}')
+  fixture=$(sha256sum "$output/vt-map-image.iso" | awk '{print $1}')
+  [ "$original" = "$fixture" ] || { echo 'Original source ISO changed' >&2; exit 9; }
+  python3 "$(dirname "$0")/verify-extent-map.py" \
+    "$output/qemu.log" "$output/vt-map-image.iso" \
+    "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+    "$min_extents" "$part_num"
+  {
+    echo 'vt080_original_iso_efi_loader_to_linux_overlay=passed'
+    echo "vt080_original_iso_sha256=$original"
+    echo 'vt080_linux_kernel=distribution_unmodified'
+    echo 'vt080_original_initrd_hook_executed=no'
+    echo 'vt080_overlay_initrd_hook_executed=yes'
+  } > "$output/runtime-result.txt"
+  exit 0
+fi
+
 if [ "$efi_mode" = linux-handoff ]; then
   expected=$(sha256sum "$output/vt-map-image.iso" | awk '{print $1}')
   if grep -q 'VT_MAP_SUCCESS' "$output/qemu.log" &&
