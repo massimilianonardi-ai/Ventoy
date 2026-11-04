@@ -128,6 +128,22 @@ if ! /bin/map-consumer /run/iso-table; then
 fi
 /usr/sbin/dmsetup create vt_iso_poc --readonly --table "$(/bin/busybox cat /run/iso-table)" ||
   { echo VT_LINUX_DM_CREATE_FAILED; exit 16; }
+# devtmpfs publishes the kernel dm-N block device, but this minimal initramfs
+# intentionally has no udev to create /dev/mapper/vt_iso_poc. Resolve the
+# exact kernel dm name and numbers instead of assuming dm-0 or major 253.
+if [ ! -b /dev/mapper/vt_iso_poc ]; then
+  found=0
+  for named in /sys/block/dm-*/dm/name; do
+    [ -f "$named" ] || continue
+    [ "$(/bin/busybox cat "$named")" = vt_iso_poc ] || continue
+    found=$((found + 1))
+    IFS=: read -r major minor < "${named%/dm/name}/dev" ||
+      { echo VT_LINUX_DM_SYSFS_ID_FAILED; exit 17; }
+    /bin/busybox mknod -m 0444 /dev/mapper/vt_iso_poc b "$major" "$minor" ||
+      { echo VT_LINUX_DM_MKNOD_FAILED; exit 17; }
+  done
+  [ "$found" -eq 1 ] || { echo VT_LINUX_DM_NAME_AMBIGUOUS; exit 17; }
+fi
 /bin/busybox test -b /dev/mapper/vt_iso_poc ||
   { echo VT_LINUX_DM_DEVICE_MISSING; exit 17; }
 /bin/busybox sha256sum /dev/mapper/vt_iso_poc > /run/iso.sha ||
