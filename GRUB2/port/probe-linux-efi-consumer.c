@@ -82,7 +82,7 @@ static int locate_disk(const uint8_t *guid, uint64_t expected_bytes,
             continue;
         }
         memset(gpt, 0, sizeof(gpt));
-        if (pread(fd, gpt, sizeof(gpt), 512) != sizeof(gpt)
+        if (pread(fd, gpt, sizeof(gpt), 512) != (ssize_t)sizeof(gpt)
             || memcmp(gpt, "EFI PART", 8)
             || memcmp(gpt + 56, guid, 16)) {
             close(fd);
