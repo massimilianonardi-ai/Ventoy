@@ -1007,7 +1007,7 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
             goto done;
         }
 
-        Status = Root->Open(Root, &File, L"\\PAYLOAD.BIN",
+        Status = Root->Open(Root, &File, L"\\payload.bin",
                             EFI_FILE_MODE_READ, 0);
         if (EFI_ERROR(Status) || !File)
         {
