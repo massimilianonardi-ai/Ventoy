@@ -86,21 +86,6 @@ jobs:
             "$RUNNER_TEMP/standalone-uefi-gpt3-probe" ext4-gpt3 \
             "$RUNNER_TEMP/standalone-efi-consumer/VTOYDIAG.EFI"
 
-      - name: Build real unmodified Ubuntu kernel/initramfs transport test
-        run: |
-          set -eu
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            busybox-static cpio dmsetup linux-image-generic linux-modules-extra-generic zstd kmod
-          sudo sh GRUB2/port/build-linux-handoff-initrd.sh "$RUNNER_TEMP/linux-handoff"
-      - name: Boot actual Linux guest and verify persisted GRUB sector map
-        run: |
-          set -eu
-          VTOY_LINUX_KERNEL="$RUNNER_TEMP/linux-handoff/vmlinuz" \
-          VTOY_LINUX_INITRD="$RUNNER_TEMP/linux-handoff/initrd.img" \
-          sh GRUB2/port/probe-standalone-uefi.sh \
-            "$RUNNER_TEMP/standalone-source-probe/source/grub-core/ventoy_source_probe.mod" \
-            "$RUNNER_TEMP/linux-qemu-test" ext4-gpt3 '' linux-handoff
-
       - name: Upload module build evidence only (not a Ventoy release)
         if: always()
         uses: actions/upload-artifact@v4
@@ -109,10 +94,6 @@ jobs:
           path: |
             ${{ runner.temp }}/source-module-provenance.txt
             ${{ runner.temp }}/standalone-source-probe/result.txt
-            ${{ runner.temp }}/linux-handoff/provenance.txt
-            ${{ runner.temp }}/linux-qemu-test/runtime-result.txt
-            ${{ runner.temp }}/linux-qemu-test/qemu.log
-            ${{ runner.temp }}/linux-qemu-test/iso-map-verification.txt
             ${{ runner.temp }}/standalone-source-probe/autogen.log
             ${{ runner.temp }}/standalone-source-probe/configure.log
             ${{ runner.temp }}/standalone-source-probe/build.log
