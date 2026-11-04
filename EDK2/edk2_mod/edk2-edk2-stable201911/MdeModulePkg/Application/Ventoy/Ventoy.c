@@ -916,6 +916,166 @@ STATIC EFI_STATUS ventoy_probe_secondary_iso_driver(IN EFI_HANDLE ImageHandle)
     return gBS->StartImage(Driver, NULL, NULL);
 }
 
+/* The bounded synthetic original-Ventoy BlockIo ISO9660 file probe.
+ * The FS driver is loaded from the isolated boot ESP; the file is opened
+ * from the real published virtual-CD handle, never from the source disk.
+ * This is a test of the EFI Simple File System protocol, not a release API.
+ */
+STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
+{
+    EFI_STATUS Status;
+    EFI_HANDLE *Handles = NULL;
+    UINTN Count = 0, i;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Fs = NULL;
+    EFI_DEVICE_PATH_PROTOCOL *DevicePath = NULL;
+    EFI_FILE_PROTOCOL *Root = NULL;
+    EFI_FILE_PROTOCOL *File = NULL;
+    EFI_FILE_INFO *Info = NULL;
+    UINT8 *ReadBuf = NULL;
+    UINT8 *Expected;
+    UINTN InfoSize, ReadSize, ExtraSize;
+    UINT32 ExpectedSize;
+    UINTN Matches = 0;
+
+    if (!gMbootOverlayProbe || !g_chain ||
+        g_chain->override_chunk_num != 2 || g_chain->virt_chunk_num != 1 ||
+        !g_override_chunk || !g_virt_chunk ||
+        !gBlockData.Path || !gBlockData.DevicePathCompareLen)
+    {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    ExpectedSize = (UINT32)g_override_chunk[1].override_data[8] |
+                   ((UINT32)g_override_chunk[1].override_data[9] << 8) |
+                   ((UINT32)g_override_chunk[1].override_data[10] << 16) |
+                   ((UINT32)g_override_chunk[1].override_data[11] << 24);
+    if (ExpectedSize == 0 || ExpectedSize > 65536)
+    {
+        return EFI_COMPROMISED_DATA;
+    }
+    Expected = (UINT8 *)g_virt_chunk + g_virt_chunk[0].mem_sector_offset;
+    ReadBuf = AllocatePool(ExpectedSize + 1);
+    if (!ReadBuf)
+    {
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    Status = gBS->LocateHandleBuffer(ByProtocol,
+                                     &gEfiSimpleFileSystemProtocolGuid,
+                                     NULL, &Count, &Handles);
+    if (EFI_ERROR(Status))
+    {
+        goto done;
+    }
+
+    Status = EFI_NOT_FOUND;
+    for (i = 0; i < Count; i++)
+    {
+        EFI_STATUS HandleStatus = gBS->HandleProtocol(
+            Handles[i], &gEfiDevicePathProtocolGuid, (VOID **)&DevicePath);
+        if (EFI_ERROR(HandleStatus) || !DevicePath ||
+            CompareMem(gBlockData.Path, DevicePath,
+                       gBlockData.DevicePathCompareLen))
+        {
+            continue;
+        }
+        Matches++;
+        if (Matches != 1)
+        {
+            Status = EFI_SECURITY_VIOLATION;
+            goto done;
+        }
+        Status = gBS->HandleProtocol(Handles[i],
+                                     &gEfiSimpleFileSystemProtocolGuid,
+                                     (VOID **)&Fs);
+        if (EFI_ERROR(Status) || !Fs)
+        {
+            goto done;
+        }
+        Status = Fs->OpenVolume(Fs, &Root);
+        if (EFI_ERROR(Status) || !Root)
+        {
+            goto done;
+        }
+
+        Status = Root->Open(Root, &File, L"\\PAYLOAD.BIN",
+                            EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(Status) || !File)
+        {
+            goto done;
+        }
+
+        InfoSize = 0;
+        Status = File->GetInfo(File, &gEfiFileInfoGuid, &InfoSize, NULL);
+        if (Status != EFI_BUFFER_TOO_SMALL ||
+            InfoSize < SIZE_OF_EFI_FILE_INFO + sizeof(CHAR16) ||
+            InfoSize > 4096)
+        {
+            Status = EFI_COMPROMISED_DATA;
+            goto done;
+        }
+        Info = AllocatePool(InfoSize);
+        if (!Info)
+        {
+            Status = EFI_OUT_OF_RESOURCES;
+            goto done;
+        }
+        Status = File->GetInfo(File, &gEfiFileInfoGuid, &InfoSize, Info);
+        if (EFI_ERROR(Status) || Info->FileSize != ExpectedSize)
+        {
+            Status = EFI_COMPROMISED_DATA;
+            goto done;
+        }
+
+        ReadSize = ExpectedSize;
+        Status = File->Read(File, &ReadSize, ReadBuf);
+        if (EFI_ERROR(Status) || ReadSize != ExpectedSize ||
+            CompareMem(ReadBuf, Expected, ExpectedSize))
+        {
+            Status = EFI_COMPROMISED_DATA;
+            goto done;
+        }
+        ExtraSize = 1;
+        Status = File->Read(File, &ExtraSize, ReadBuf);
+        if (EFI_ERROR(Status) || ExtraSize != 0)
+        {
+            Status = EFI_COMPROMISED_DATA;
+        }
+        else
+        {
+            Status = EFI_SUCCESS;
+        }
+        goto done;
+    }
+    if (Matches == 0)
+    {
+        Status = EFI_NOT_FOUND;
+    }
+
+done:
+    if (Info)
+    {
+        FreePool(Info);
+    }
+    if (File)
+    {
+        File->Close(File);
+    }
+    if (Root)
+    {
+        Root->Close(Root);
+    }
+    if (Handles)
+    {
+        FreePool(Handles);
+    }
+    if (ReadBuf)
+    {
+        FreePool(ReadBuf);
+    }
+    return Status;
+}
+
 /* Exercise Ventoy's OWN production virtual BlockIo callbacks against
  * the independently selected whole GPT disk. In this opt-in mode no
  * installer starts. Validate the entire published CD payload against an
@@ -1038,7 +1198,13 @@ STATIC EFI_STATUS ventoy_probe_secondary_media(IN EFI_HANDLE ImageHandle)
     Result[8] = 0;
     grub_env_set("vt_original_virtual_crc32", Result);
     Status = EFI_SUCCESS;
-    if (gMbootBootProbe)
+    if (gMbootOverlayProbe)
+    {
+        Status = ventoy_probe_secondary_overlay_file();
+        grub_env_set("vt_original_iso_file_overlay",
+                     EFI_ERROR(Status) ? "rejected" : "verified");
+    }
+    if (!EFI_ERROR(Status) && gMbootBootProbe)
     {
         Status = ventoy_boot(ImageHandle);
         grub_env_set("vt_original_boot_probe",
@@ -1874,7 +2040,7 @@ EFI_STATUS EFIAPI VentoyEfiMain
                      EFI_ERROR(Status) ? "rejected" : "selected");
         if (!EFI_ERROR(Status) && gMbootMediaProbe)
         {
-            if (gMbootBootProbe)
+            if (gMbootBootProbe || gMbootOverlayProbe)
             {
                 Status = ventoy_probe_secondary_iso_driver(ImageHandle);
                 grub_env_set("vt_original_iso_driver",
