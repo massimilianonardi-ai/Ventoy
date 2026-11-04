@@ -12,11 +12,146 @@
 #include <grub/err.h>
 #include <grub/env.h>
 #include <grub/ventoy.h>
+#include <grub/efi/efi.h>
+#include <grub/efi/api.h>
 
 /* Keep both original Ventoy ABI objects in GRUB memory until StartImage
  * returns or this module is unloaded. Neither survives GRUB teardown. */
 static ventoy_chain_head *vt_pending_chain;
 static ventoy_grub_param *vt_pending_env;
+
+
+/*
+ * Experimental, volatile UEFI Runtime Services handoff.
+ * Transport original upstream Ventoy os_param + img_chunk records,
+ * supplemented only with the GPT disk GUID to identify the physical
+ * backing device in Linux after ExitBootServices.
+ *
+ * Wire header is private to this isolated probe, not a product API.
+ * x86_64 little endian only; the existing firmware probe is x86_64 EFI.
+ */
+struct __attribute__ ((packed)) vt_efi_map_payload
+{
+  grub_uint8_t magic[8];       /* "VTDMAP01" */
+  grub_uint32_t count;
+  grub_uint32_t chunk_bytes;
+  grub_uint64_t iso_bytes;
+  grub_uint8_t gpt_guid[16];
+  ventoy_os_param os_param;    /* ORIGINAL upstream layout */
+  ventoy_img_chunk chunks[1]; /* ORIGINAL upstream layout */
+};
+
+static grub_command_t vt_efi_publish_command;
+static const grub_efi_guid_t vt_efi_probe_guid =
+  { 0x0e5e24d4, 0x168b, 0x4f9e,
+    { 0xa3, 0x97, 0x09, 0x51, 0xf7, 0x57, 0x11, 0x1e } };
+static grub_efi_char16_t vt_efi_probe_var[] =
+  { 'V', 't', 'D', 'm', 'M', 'a', 'p', 'P', 'r', 'o', 'b', 'e', 0 };
+
+static int
+vt_hex_val (char x)
+{
+  if (x >= '0' && x <= '9')
+    return x - '0';
+  if (x >= 'a' && x <= 'f')
+    return x - 'a' + 10;
+  if (x >= 'A' && x <= 'F')
+    return x - 'A' + 10;
+  return -1;
+}
+
+/* Can only be called after vt_extent_probe succeeded and retained
+ * the original Ventoy chain in live GRUB memory. */
+static grub_err_t
+vt_publish_efi_map (grub_command_t command __attribute__ ((unused)),
+                    int argc, char **args __attribute__ ((unused)))
+{
+  const char *guid_text = grub_env_get ("vt_probe_gpt_guid");
+  const ventoy_chain_head *chain = vt_pending_chain;
+  struct vt_efi_map_payload *payload = 0;
+  grub_size_t data_bytes;
+  grub_uint32_t i;
+  grub_efi_status_t status;
+  static const grub_uint8_t magic[] = "VTDMAP01";
+
+  if (argc != 0)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT, "usage: vt_publish_efi_map");
+  if (!chain || !guid_text || grub_strlen (guid_text) != 32
+      || chain->img_chunk_num == 0 || chain->img_chunk_num > 16384
+      || chain->img_chunk_offset != sizeof (*chain)
+      || chain->disk_sector_size != 512
+      || chain->real_img_size_in_bytes != chain->virt_img_size_in_bytes)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                       "no complete original Ventoy image map available");
+  /* UEFI volatile variable size depends on firmware: stay deliberately
+   * small for this transport proof, fail rather than silently truncate. */
+  data_bytes = sizeof (*payload) - sizeof (payload->chunks)
+               + (grub_size_t) chain->img_chunk_num
+                 * sizeof (ventoy_img_chunk);
+  if (data_bytes > 16384)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE,
+                       "probe EFI variable exceeds 16 KiB budget");
+
+  payload = grub_zalloc (data_bytes);
+  if (!payload)
+    return grub_errno;
+  grub_memcpy (payload->magic, magic, sizeof (payload->magic));
+  payload->count = chain->img_chunk_num;
+  payload->chunk_bytes = sizeof (ventoy_img_chunk);
+  payload->iso_bytes = chain->real_img_size_in_bytes;
+  payload->os_param = chain->os_param;
+  grub_memcpy (payload->chunks,
+               (const grub_uint8_t *) chain + chain->img_chunk_offset,
+               (grub_size_t) chain->img_chunk_num * sizeof (ventoy_img_chunk));
+  for (i = 0; i != 16; ++i)
+    {
+      int high = vt_hex_val (guid_text[2 * i]);
+      int low = vt_hex_val (guid_text[2 * i + 1]);
+      if (high < 0 || low < 0)
+        {
+          grub_free (payload);
+          return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                             "invalid source GPT identifier");
+        }
+      payload->gpt_guid[i] = (grub_uint8_t) ((high << 4) | low);
+    }
+
+  if (!grub_efi_system_table || !grub_efi_system_table->runtime_services
+      || !grub_efi_system_table->runtime_services->set_variable)
+    {
+      grub_free (payload);
+      return grub_error (GRUB_ERR_BAD_DEVICE, "UEFI Runtime Services absent");
+    }
+  status = grub_efi_system_table->runtime_services->set_variable
+    (vt_efi_probe_var, (grub_efi_guid_t *) &vt_efi_probe_guid,
+     GRUB_EFI_VARIABLE_BOOTSERVICE_ACCESS
+     | GRUB_EFI_VARIABLE_RUNTIME_ACCESS,
+     data_bytes, payload);
+  grub_free (payload);
+  if (status != GRUB_EFI_SUCCESS)
+    return grub_error (GRUB_ERR_IO, "UEFI SetVariable returned %llu",
+                       (unsigned long long) status);
+  grub_printf ("VT_EFI_MAP_PUBLISHED count=%u bytes=%lu iso_bytes=%llu\\n",
+               (unsigned) chain->img_chunk_num, (unsigned long) data_bytes,
+               (unsigned long long) chain->real_img_size_in_bytes);
+  return GRUB_ERR_NONE;
+}
+
+void
+vt_register_efi_publish_probe (void)
+{
+  vt_efi_publish_command =
+    grub_register_command ("vt_publish_efi_map", vt_publish_efi_map,
+                           0, "Publish original extent map to volatile EFI runtime variable.");
+}
+
+void
+vt_unregister_efi_publish_probe (void)
+{
+  if (vt_efi_publish_command)
+    grub_unregister_command (vt_efi_publish_command);
+}
+
 
 void vt_release_handoff_probe (void);
 
