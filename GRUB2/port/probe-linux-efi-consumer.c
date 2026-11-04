@@ -187,7 +187,7 @@ int main(int argc, char **argv)
             || ds < start_sector || de > partition_last)
             die("mapped sectors outside the actual source GPT partition");
         if (fprintf(table, "%" PRIu64 " %" PRIu64 " linear %s %" PRIu64 "\n",
-                    is * 4, length, partition, ds - start_sector) < 0)
+                    is * 4, length, partition, (uint64_t)(ds - start_sector)) < 0)
             die("cannot serialize Linux dm table");
         expected = ie + 1;
     }
