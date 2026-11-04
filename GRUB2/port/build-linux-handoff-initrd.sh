@@ -109,11 +109,11 @@ cat > "$root/init" <<'EOF'
 #!/bin/sh
 # Genuine guest kernel early userspace, not host-side parser simulation.
 export PATH=/bin:/usr/sbin
-exec >/dev/console 2>&1
 echo VT_LINUX_INITRAMFS_STARTED
 /bin/busybox mount -t proc proc /proc || exit 10
 /bin/busybox mount -t sysfs sysfs /sys || exit 11
 /bin/busybox mount -t devtmpfs devtmpfs /dev || exit 12
+exec >/dev/console 2>&1
 /bin/busybox mkdir -p /sys/firmware/efi/efivars /run /dev/mapper /mnt/iso
 sh /modules.load || { echo VT_LINUX_MODULE_LOAD_FAILED; exit 13; }
 /bin/busybox mount -t efivarfs efivarfs /sys/firmware/efi/efivars ||
@@ -123,7 +123,7 @@ if ! /bin/map-consumer /run/iso-table; then
   echo VT_LINUX_MAP_CONSUMER_FAILED
   exit 15
 fi
-/usr/sbin/dmsetup create vt_iso_poc --readonly --table "$(cat /run/iso-table)" ||
+/usr/sbin/dmsetup create vt_iso_poc --readonly --table "$(/bin/busybox cat /run/iso-table)" ||
   { echo VT_LINUX_DM_CREATE_FAILED; exit 16; }
 /bin/busybox test -b /dev/mapper/vt_iso_poc ||
   { echo VT_LINUX_DM_DEVICE_MISSING; exit 17; }
@@ -133,7 +133,7 @@ read digest rest < /run/iso.sha
 echo "VT_LINUX_ISO_SHA256=$digest"
 /bin/busybox mount -t iso9660 -o ro /dev/mapper/vt_iso_poc /mnt/iso ||
   { echo VT_LINUX_ISO9660_MOUNT_FAILED; exit 19; }
-if [ "$(cat /mnt/iso/.pve-cd-id.txt)" != pve-efi-linux-poc-media-id-2026-11-04 ]; then
+if [ "$(/bin/busybox cat /mnt/iso/.pve-cd-id.txt)" != pve-efi-linux-poc-media-id-2026-11-04 ]; then
   echo VT_LINUX_ISO_IDENTITY_FAILED
   exit 20
 fi
