@@ -4,7 +4,7 @@
 set -eu
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 5 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media|original-boot]]" >&2
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media|original-boot|linux-handoff]]" >&2
   exit 2
 fi
 
@@ -14,7 +14,7 @@ source_fs=${3:-fat32}
 efi_probe=${4:-}
 efi_mode=${5:-diagnostic}
 case "$efi_mode" in
-  diagnostic) ;;
+  diagnostic|linux-handoff) ;;
   original|original-negative|original-media|original-boot) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
   *) echo "Unknown EFI mode: $efi_mode" >&2; exit 2 ;;
 esac
@@ -28,6 +28,10 @@ case "$source_fs" in
   ext4-gpt3) expected_grub_fs='fs=ext2'; min_extents=1; part_num=3 ;;
   *) echo "Unsupported source filesystem: $source_fs" >&2; exit 2 ;;
 esac
+if [ "$efi_mode" = linux-handoff ]; then
+  test -s "${VTOY_LINUX_KERNEL:-}" || { echo 'Missing original Linux kernel binary' >&2; exit 4; }
+  test -s "${VTOY_LINUX_INITRD:-}" || { echo 'Missing experimental Linux initramfs' >&2; exit 4; }
+fi
 if [ "$efi_mode" = original-boot ]; then
   test -s "${VTOY_ISO_BOOT_EFI:-}" || { echo 'Missing genuine EFI payload for ISO' >&2; exit 4; }
   test -s "${VTOY_ISO_DRIVER_EFI:-}" || { echo 'Missing original Ventoy ISO9660 EFI driver' >&2; exit 4; }
@@ -82,6 +86,18 @@ echo VTOY_EXTENT_MAP_BEGIN
 vt_extent_probe ($isopart)/vt-map-image.iso
 echo VTOY_EXTENT_MAP_DONE
 EOF
+
+if [ "$efi_mode" = linux-handoff ]; then
+  cat >> "$output/runtime.cfg" <<'EOF'
+echo VT_UEFI_MAP_EXPORT_BEGIN
+vt_publish_efi_map
+echo VT_UEFI_MAP_EXPORT_RETURNED
+linux ($bootpart)/vmlinuz console=ttyS0
+initrd ($bootpart)/initrd.img
+echo VT_UEFI_LINUX_KERNEL_START
+boot
+EOF
+fi
 
 if [ -n "$efi_probe" ] && [ "$efi_mode" = original-negative ]; then
   cat >> "$output/runtime.cfg" <<'EOF'
@@ -181,7 +197,7 @@ grub-mkimage --format=x86_64-efi \
   --directory=/usr/lib/grub/x86_64-efi \
   --prefix=/grub --config="$output/bootstrap.cfg" \
   --output="$output/BOOTX64.EFI" \
-  part_gpt fat ext2 chain search search_fs_file serial terminal normal configfile test echo halt ls
+  part_gpt fat ext2 chain search search_fs_file serial terminal normal configfile test echo halt ls linux
 
 # Each target is an isolated NEW GPT image, not a host or loop device.
 for target in boot iso; do
@@ -217,6 +233,10 @@ done
 mmd -i "$output/boot-part.img" ::/EFI ::/EFI/BOOT ::/grub ::/grub/x86_64-efi
 mcopy -i "$output/boot-part.img" "$output/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$output/boot-part.img" "$module" ::/grub/x86_64-efi/ventoy_source_probe.mod
+if [ "$efi_mode" = linux-handoff ]; then
+  mcopy -i "$output/boot-part.img" "$VTOY_LINUX_KERNEL" ::/vmlinuz
+  mcopy -i "$output/boot-part.img" "$VTOY_LINUX_INITRD" ::/initrd.img
+fi
 if [ -n "$efi_probe" ]; then
   mcopy -i "$output/boot-part.img" "$efi_probe" ::/EFI/BOOT/VTOYDIAG.EFI
 fi
@@ -234,6 +254,7 @@ echo 'source-location fixture, not a bootable ISO' > "$output/vt-probe-image.iso
 # Create a genuine ISO9660 filesystem with deterministic, nonuniform data.
 # The bytes are intentionally NOT a hand-written fake ISO header.
 mkdir "$output/iso-content"
+printf "pve-efi-linux-poc-media-id-2026-11-04\\n" > "$output/iso-content/.pve-cd-id.txt"
 python3 - "$output/iso-content/payload.bin" <<'PY'
 import hashlib
 import sys
@@ -406,6 +427,26 @@ timeout 90 qemu-system-x86_64 -machine q35 -accel tcg -m 1024 -smp 2 \
   > "$output/qemu.log" 2>&1
 qemu_status=$?
 set -e
+
+if [ "$efi_mode" = linux-handoff ]; then
+  expected=$(sha256sum "$output/vt-map-image.iso" | awk '{print $1}')
+  if grep -q 'VT_MAP_SUCCESS' "$output/qemu.log" &&
+     grep -q 'VT_EFI_MAP_PUBLISHED' "$output/qemu.log" &&
+     grep -q 'VT_LINUX_MAP_CONSUMED' "$output/qemu.log" &&
+     grep -q "VT_LINUX_ISO_SHA256=$expected" "$output/qemu.log" &&
+     grep -q 'VT_LINUX_ISO_IDENTITY_PASS' "$output/qemu.log" &&
+     grep -q 'VT_LINUX_HANDOFF_PASS' "$output/qemu.log"; then
+    printf 'grub_efi_to_linux_dm=passed\\nsource=grub-original-ventoy-extent-map\\nlinux_kernel=unchanged\\n' | tee "$output/runtime-result.txt"
+    python3 "$(dirname "$0")/verify-extent-map.py" \\
+       "$output/qemu.log" "$output/vt-map-image.iso" \\
+       "$output/iso-disk.img" "$output/iso-map-verification.txt" \\
+       "$min_extents" "$part_num"
+    exit 0
+  fi
+  echo "grub_efi_to_linux_dm=failed (QEMU $qemu_status)" > "$output/runtime-result.txt"
+  tail -n 120 "$output/qemu.log" >&2
+  exit 7
+fi
 
 if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
    grep -q 'VT_CHAIN_SUCCESS' "$output/qemu.log" &&
