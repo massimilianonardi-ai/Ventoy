@@ -153,6 +153,7 @@ if [ -n "$vt_probe_chain_addr" ]; then
   echo VTOY_ORIGINAL_SOURCE_STATUS=$vt_original_source_probe
   echo VTOY_ORIGINAL_ISO_DRIVER=$vt_original_iso_driver
   echo VTOY_ORIGINAL_ISO_FILE_OVERLAY=$vt_original_iso_file_overlay
+  echo VT_ISO_FILE_READ_STAGE=$vt_original_iso_file_stage
   echo VTOY_ORIGINAL_MEDIA_STATUS=$vt_original_media_probe
   echo VTOY_ORIGINAL_MEDIA_PUBLISHED=$vt_original_virtual_published
   echo VTOY_ORIGINAL_MEDIA_CRC32=$vt_original_virtual_crc32
