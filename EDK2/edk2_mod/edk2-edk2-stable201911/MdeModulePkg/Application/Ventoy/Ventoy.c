@@ -61,6 +61,7 @@ static grub_env_set_pf grub_env_set = NULL;
 STATIC BOOLEAN gMbootSourceProbe = FALSE;
 STATIC BOOLEAN gMbootMediaProbe = FALSE;
 STATIC BOOLEAN gMbootBootProbe = FALSE;
+STATIC BOOLEAN gMbootOverlayProbe = FALSE;
 STATIC UINT8 gMbootSourceGuid[16];
 STATIC UINTN gMbootChainBytes = 0;
 
@@ -596,6 +597,86 @@ STATIC EFI_STATUS ventoy_parse_secondary_guid(IN CONST CHAR16 *Options)
     return EFI_SUCCESS;
 }
 
+
+/* Only the disposable mboot_overlay_probe mode may carry extra chunks.
+ * Production/default and standard secondary probes still require exact
+ * original-only ISO sizes. Trust no pointers beyond the provided chain.
+ */
+STATIC BOOLEAN ventoy_overlay_probe_chain_valid(VOID)
+{
+    UINT64 Base, End, VirtualSectors, RealSectors;
+    UINT32 ReplaceSize, i;
+    ventoy_override_chunk *Ov;
+    ventoy_virt_chunk *Virt;
+
+    Base = sizeof(ventoy_chain_head) +
+           (UINT64)g_chain->img_chunk_num * sizeof(ventoy_img_chunk);
+    if (g_chain->override_chunk_num != 2 ||
+        g_chain->virt_chunk_num != 1 ||
+        g_chain->override_chunk_offset != Base ||
+        g_chain->virt_chunk_offset != Base + 2 * sizeof(ventoy_override_chunk) ||
+        g_chain->real_img_size_in_bytes % 2048 ||
+        g_chain->virt_img_size_in_bytes <= g_chain->real_img_size_in_bytes ||
+        g_chain->virt_img_size_in_bytes > g_chain->real_img_size_in_bytes + 65536 ||
+        g_chain->virt_img_size_in_bytes % 2048)
+    {
+        return FALSE;
+    }
+
+    RealSectors = g_chain->real_img_size_in_bytes / 2048;
+    VirtualSectors = g_chain->virt_img_size_in_bytes / 2048;
+    End = Base + 2 * sizeof(ventoy_override_chunk) + sizeof(ventoy_virt_chunk)
+          + (VirtualSectors - RealSectors) * 2048;
+    if (End != gMbootChainBytes ||
+        RealSectors > 0xffffffffULL || VirtualSectors > 0xffffffffULL)
+    {
+        return FALSE;
+    }
+
+    Ov = g_override_chunk;
+    Virt = g_virt_chunk;
+    ReplaceSize = (UINT32)Ov[1].override_data[8] |
+                  ((UINT32)Ov[1].override_data[9] << 8) |
+                  ((UINT32)Ov[1].override_data[10] << 16) |
+                  ((UINT32)Ov[1].override_data[11] << 24);
+    if (Ov[0].img_offset != 16 * 2048 + 80 ||
+        Ov[0].override_size != 8 ||
+        Ov[1].img_offset < 17 * 2048 ||
+        Ov[1].img_offset > g_chain->real_img_size_in_bytes - 16 ||
+        Ov[1].override_size != 16 ||
+        ReplaceSize == 0 || ReplaceSize > 65536 ||
+        (ReplaceSize + 2047) / 2048 != VirtualSectors - RealSectors ||
+        Virt->mem_sector_start != RealSectors ||
+        Virt->mem_sector_end != VirtualSectors ||
+        Virt->mem_sector_offset != sizeof(*Virt) ||
+        Virt->remap_sector_start || Virt->remap_sector_end ||
+        Virt->org_sector_start)
+    {
+        return FALSE;
+    }
+
+    /* Both-endian ISO9660 volume count and synthetic dirent extent. */
+    for (i = 0; i < 4; i++)
+    {
+        if (Ov[0].override_data[i] !=
+             (UINT8)(VirtualSectors >> (8 * i)) ||
+            Ov[0].override_data[4 + i] !=
+             (UINT8)(VirtualSectors >> (8 * (3 - i))) ||
+            Ov[1].override_data[i] !=
+             (UINT8)(RealSectors >> (8 * i)) ||
+            Ov[1].override_data[4 + i] !=
+             (UINT8)(RealSectors >> (8 * (3 - i))) ||
+            Ov[1].override_data[8 + i] !=
+             (UINT8)(ReplaceSize >> (8 * i)) ||
+            Ov[1].override_data[12 + i] !=
+             (UINT8)(ReplaceSize >> (8 * (3 - i))))
+        {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
 /* Read-only, real EFI BlockIo matching for an image on ANY supported
  * source GPT partition, without Ventoy disk branding or partition order.
  * Checks full native chunk coverage, original MBR identity, true disk GPT
@@ -620,17 +701,18 @@ STATIC EFI_STATUS ventoy_find_secondary_source(VOID)
 
     if (!g_chain || !g_chunk || !g_img_chunk_num ||
         g_img_chunk_num > 16384 ||
-        gMbootChainBytes != sizeof(ventoy_chain_head) +
-                           g_img_chunk_num * sizeof(ventoy_img_chunk) ||
         g_chain->img_chunk_offset != sizeof(ventoy_chain_head) ||
         g_chain->disk_sector_size != 512 ||
-        g_chain->override_chunk_num != 0 || g_chain->virt_chunk_num != 0 ||
+        (gMbootOverlayProbe ? !ventoy_overlay_probe_chain_valid() :
+         (gMbootChainBytes != sizeof(ventoy_chain_head) +
+                             g_img_chunk_num * sizeof(ventoy_img_chunk) ||
+          g_chain->override_chunk_num != 0 || g_chain->virt_chunk_num != 0 ||
+          g_chain->virt_img_size_in_bytes != g_chain->real_img_size_in_bytes)) ||
         g_chain->os_param.vtoy_disk_size == 0 ||
         (g_chain->os_param.vtoy_disk_size % 512) ||
         g_chain->os_param.vtoy_img_size == 0 ||
         (g_chain->os_param.vtoy_img_size % 2048) ||
         g_chain->real_img_size_in_bytes != g_chain->os_param.vtoy_img_size ||
-        g_chain->virt_img_size_in_bytes != g_chain->real_img_size_in_bytes ||
         CompareMem(&g_chain->os_param.guid, &Guid, sizeof(Guid)))
     {
         return EFI_COMPROMISED_DATA;
@@ -1417,7 +1499,8 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
      * The upstream Ventoy device-check result is still required above. */
     if (StrStr(pCmdLine, L"mboot_source_probe=1") ||
         StrStr(pCmdLine, L"mboot_media_probe=1") ||
-        StrStr(pCmdLine, L"mboot_boot_probe=1"))
+        StrStr(pCmdLine, L"mboot_boot_probe=1") ||
+        StrStr(pCmdLine, L"mboot_overlay_probe=1"))
     {
         gMbootBootProbe = StrStr(pCmdLine, L"mboot_boot_probe=1") != NULL;
         gMbootMediaProbe = gMbootBootProbe ||
