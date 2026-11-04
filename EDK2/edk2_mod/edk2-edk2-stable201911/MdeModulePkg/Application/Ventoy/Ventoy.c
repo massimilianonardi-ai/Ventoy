@@ -1513,7 +1513,8 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
         StrStr(pCmdLine, L"mboot_overlay_probe=1"))
     {
         gMbootBootProbe = StrStr(pCmdLine, L"mboot_boot_probe=1") != NULL;
-        gMbootMediaProbe = gMbootBootProbe ||
+        gMbootOverlayProbe = StrStr(pCmdLine, L"mboot_overlay_probe=1") != NULL;
+        gMbootMediaProbe = gMbootBootProbe || gMbootOverlayProbe ||
                             StrStr(pCmdLine, L"mboot_media_probe=1") != NULL;
         const char *Mode = grub_env_get("VTOY_MBOOT_SECONDARY");
         if (!Mode || Mode[0] != '1' || Mode[1] != 0)
