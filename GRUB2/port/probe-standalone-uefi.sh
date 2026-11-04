@@ -32,9 +32,11 @@ if [ "$efi_mode" = linux-handoff ]; then
   test -s "${VTOY_LINUX_KERNEL:-}" || { echo 'Missing original Linux kernel binary' >&2; exit 4; }
   test -s "${VTOY_LINUX_INITRD:-}" || { echo 'Missing experimental Linux initramfs' >&2; exit 4; }
 fi
+if [ "$efi_mode" = original-boot ] || [ "$efi_mode" = original-overlay ]; then
+  test -s "${VTOY_ISO_DRIVER_EFI:-}" || { echo 'Missing original Ventoy ISO9660 EFI driver' >&2; exit 4; }
+fi
 if [ "$efi_mode" = original-boot ]; then
   test -s "${VTOY_ISO_BOOT_EFI:-}" || { echo 'Missing genuine EFI payload for ISO' >&2; exit 4; }
-  test -s "${VTOY_ISO_DRIVER_EFI:-}" || { echo 'Missing original Ventoy ISO9660 EFI driver' >&2; exit 4; }
 fi
 [ -s "$module" ] || { echo 'Nonempty compiled module required' >&2; exit 3; }
 [ ! -e "$output" ] || { echo 'Output directory already exists' >&2; exit 4; }
@@ -149,6 +151,8 @@ if [ -n "$vt_probe_chain_addr" ]; then
     echo VTOY_ORIGINAL_OVERLAY_FAILED
   fi
   echo VTOY_ORIGINAL_SOURCE_STATUS=$vt_original_source_probe
+  echo VTOY_ORIGINAL_ISO_DRIVER=$vt_original_iso_driver
+  echo VTOY_ORIGINAL_ISO_FILE_OVERLAY=$vt_original_iso_file_overlay
   echo VTOY_ORIGINAL_MEDIA_STATUS=$vt_original_media_probe
   echo VTOY_ORIGINAL_MEDIA_PUBLISHED=$vt_original_virtual_published
   echo VTOY_ORIGINAL_MEDIA_CRC32=$vt_original_virtual_crc32
@@ -274,7 +278,7 @@ fi
 if [ -n "$efi_probe" ]; then
   mcopy -i "$output/boot-part.img" "$efi_probe" ::/EFI/BOOT/VTOYDIAG.EFI
 fi
-if [ "$efi_mode" = original-boot ]; then
+if [ "$efi_mode" = original-boot ] || [ "$efi_mode" = original-overlay ]; then
   mmd -i "$output/boot-part.img" ::/ventoy-secondary ::/ventoy-secondary/ventoy
   mcopy -i "$output/boot-part.img" "$VTOY_ISO_DRIVER_EFI" \
     ::/ventoy-secondary/ventoy/iso9660_x64.efi
@@ -549,6 +553,8 @@ PYCRC
          ! grep -q 'VT_OVERLAY_PREPARED' "$output/qemu.log" ||
          ! grep -q 'VTOY_ORIGINAL_OVERLAY_RETURNED' "$output/qemu.log" ||
          ! grep -q 'VTOY_ORIGINAL_SOURCE_STATUS=selected' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_ISO_DRIVER=started' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_ISO_FILE_OVERLAY=verified' "$output/qemu.log" ||
          ! grep -q 'VTOY_ORIGINAL_MEDIA_STATUS=verified' "$output/qemu.log" ||
          ! grep -q 'VTOY_ORIGINAL_MEDIA_PUBLISHED=yes' "$output/qemu.log" ||
          ! grep -q "VTOY_ORIGINAL_MEDIA_CRC32=$expected_crc" "$output/qemu.log" ||
@@ -560,7 +566,7 @@ PYCRC
       fi
       echo 'original_efi_iso_overlay=passed' >> "$output/runtime-result.txt"
       echo 'original_efi_virtual_blockio_full_crc32=verified' >> "$output/runtime-result.txt"
-      echo 'original_efi_iso_file_open=not-tested' >> "$output/runtime-result.txt"
+      echo 'original_efi_iso_file_open=verified' >> "$output/runtime-result.txt"
     elif [ "$efi_mode" = original-negative ]; then
       python3 "$(dirname "$0")/verify-extent-map.py" \
         "$output/qemu.log" "$output/vt-map-image.iso" \
