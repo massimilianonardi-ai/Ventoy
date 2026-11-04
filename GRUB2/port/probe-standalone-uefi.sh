@@ -325,6 +325,11 @@ mcopy -i "$output/boot-part.img" "$output/vt-probe-boot.marker" ::/vt-probe-boot
 
 echo 'source-location fixture, not a bootable ISO' > "$output/vt-probe-image.iso"
 
+# Use the exact independently generated, boot-tested PoC 079 ISO.
+# Its original bytes must never be rewritten by this test harness.
+if [ "$efi_mode" = original-overlay-boot ]; then
+  cp "$VTOY_BOOTABLE_ISO" "$output/vt-map-image.iso"
+else
 # Create a genuine ISO9660 filesystem with deterministic, nonuniform data.
 # The bytes are intentionally NOT a hand-written fake ISO header.
 mkdir "$output/iso-content"
@@ -388,6 +393,9 @@ else
     > "$output/xorriso.log" 2>&1
 fi
 
+fi # Fixture ISO creation only for the earlier probe modes.
+
+if [ "$efi_mode" != original-overlay-boot ]; then
 # ISO9660 bytes 0..32767 are the reserved System Area. Nonzero data
 # here makes the ext4 fixture's initial file blocks non-sparse when
 # populated by mkfs.ext4 -d; the primary volume descriptor is untouched.
@@ -418,9 +426,12 @@ xorriso -osirrox on -indev "$output/vt-map-image.iso" -extract /payload.bin \
   "$output/extracted-payload.bin" >> "$output/xorriso.log" 2>&1
 cmp "$output/iso-content/payload.bin" "$output/extracted-payload.bin"
 
+fi # Never rewrite the original bootable ISO's system area.
+
 if [ "$source_fs" = fat32 ]; then
   mcopy -i "$output/iso-part.img" "$output/vt-probe-image.iso" ::/vt-probe-image.iso
 
+  if [ "$efi_mode" != original-overlay-boot ]; then
   # Force noncontiguous FAT allocation before copying the real ISO.
   truncate -s 1M "$output/filler-A.bin"
   truncate -s 1536K "$output/filler-B.bin"
@@ -438,6 +449,7 @@ if [ "$source_fs" = fat32 ]; then
   # Fill the tail BEFORE freeing B; force an ISO crossing a physical gap.
   mcopy -i "$output/iso-part.img" "$output/filler-D.bin" ::/D.FILL
   mdel -i "$output/iso-part.img" ::/B.FILL
+  fi # Leave enough free space for the intact 40 MiB bootable ISO.
   mcopy -i "$output/iso-part.img" "$output/vt-map-image.iso" ::/vt-map-image.iso
 else
   # Rootless ext4 image population. The disk is an ordinary file, never
