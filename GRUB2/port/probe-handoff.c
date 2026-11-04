@@ -366,3 +366,111 @@ done:
     grub_disk_close (disk);
   return error;
 }
+
+/*
+ * Probe-only original Ventoy virtual sectors and ISO9660 dirent overrides.
+ * The complete original img_chunk array is preserved byte-for-byte.
+ * This code changes an in-memory EFI chain, not the physical ISO or GRUB core.
+ */
+static void
+vt_put_iso32 (grub_uint8_t *out, grub_uint32_t value)
+{
+  grub_uint32_t i;
+  for (i = 0; i < 4; ++i)
+    {
+      out[i] = (grub_uint8_t) (value >> (8 * i));
+      out[i + 4] = (grub_uint8_t) (value >> (8 * (3 - i)));
+    }
+}
+
+grub_err_t vt_probe_set_overlay (grub_uint64_t record_offset,
+                                 const grub_uint8_t *data,
+                                 grub_size_t length);
+
+grub_err_t
+vt_probe_set_overlay (grub_uint64_t record_offset,
+                      const grub_uint8_t *data,
+                      grub_size_t length)
+{
+  ventoy_chain_head *old = vt_pending_chain;
+  ventoy_chain_head *next;
+  ventoy_override_chunk *ov;
+  ventoy_virt_chunk *virt;
+  grub_uint64_t real_sectors;
+  grub_uint64_t virtual_sectors;
+  grub_size_t aligned, prefix, total;
+  char addr[40], bytes[40];
+
+  if (!old || !vt_pending_env || !data || !length || length > 65536
+      || (old->real_img_size_in_bytes % 2048)
+      || old->virt_img_size_in_bytes != old->real_img_size_in_bytes
+      || old->override_chunk_num || old->virt_chunk_num
+      || old->img_chunk_offset != sizeof (*old)
+      || record_offset < 17 * 2048
+      || record_offset + 16 > old->real_img_size_in_bytes)
+    return grub_error (GRUB_ERR_BAD_ARGUMENT,
+                       "invalid original ISO overlay probe state");
+  real_sectors = old->real_img_size_in_bytes / 2048;
+  aligned = (length + 2047) & ~(grub_size_t) 2047;
+  virtual_sectors = real_sectors + aligned / 2048;
+  if (virtual_sectors > 0xffffffffULL
+      || old->img_chunk_num > 16384)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE,
+                       "ISO overlay exceeds sector geometry");
+
+  prefix = old->virt_chunk_offset;
+  total = prefix + 2 * sizeof (ventoy_override_chunk)
+          + sizeof (ventoy_virt_chunk) + aligned;
+  if (prefix != sizeof (*old) + old->img_chunk_num
+                                       * sizeof (ventoy_img_chunk)
+      || total > 1024 * 1024)
+    return grub_error (GRUB_ERR_OUT_OF_RANGE,
+                       "ISO overlay chain exceeds bounded probe buffer");
+  next = grub_zalloc (total);
+  if (!next)
+    return grub_errno;
+  grub_memcpy (next, old, prefix);
+  next->override_chunk_num = 2;
+  next->override_chunk_offset = prefix;
+  next->virt_chunk_num = 1;
+  next->virt_chunk_offset =
+    prefix + 2 * sizeof (ventoy_override_chunk);
+  next->virt_img_size_in_bytes = virtual_sectors * 2048;
+  ov = (ventoy_override_chunk *)
+       ((grub_uint8_t *) next + next->override_chunk_offset);
+
+  /* ISO9660 volume space size: both-endian number of 2048-byte sectors. */
+  ov[0].img_offset = (grub_uint64_t) 16 * 2048 + 80;
+  ov[0].override_size = 8;
+  vt_put_iso32 (ov[0].override_data, (grub_uint32_t) virtual_sectors);
+
+  /* Directory record extent and exact file size (both endian orders). */
+  ov[1].img_offset = record_offset;
+  ov[1].override_size = 16;
+  vt_put_iso32 (ov[1].override_data, (grub_uint32_t) real_sectors);
+  vt_put_iso32 (ov[1].override_data + 8, (grub_uint32_t) length);
+
+  virt = (ventoy_virt_chunk *)
+         ((grub_uint8_t *) next + next->virt_chunk_offset);
+  virt->mem_sector_start = (grub_uint32_t) real_sectors;
+  virt->mem_sector_end = (grub_uint32_t) virtual_sectors;
+  virt->mem_sector_offset = sizeof (*virt);
+  grub_memcpy ((grub_uint8_t *) (virt + 1), data, length);
+
+  grub_snprintf (addr, sizeof (addr), "0x%llx",
+                 (unsigned long long) (grub_addr_t) next);
+  grub_snprintf (bytes, sizeof (bytes), "%llu",
+                 (unsigned long long) total);
+  if (grub_env_set ("vt_probe_chain_size", bytes)
+      || grub_env_set ("vt_probe_chain_addr", addr))
+    {
+      grub_free (next);
+      return grub_error (GRUB_ERR_BAD_DEVICE,
+                         "unable to publish new EFI chain pointer");
+    }
+  vt_pending_chain = next;
+  grub_free (old);
+  grub_printf ("VT_OVERLAY_ABI_READY chunks=2 virt_chunks=1 bytes=%lu\n",
+               (unsigned long) total);
+  return GRUB_ERR_NONE;
+}
