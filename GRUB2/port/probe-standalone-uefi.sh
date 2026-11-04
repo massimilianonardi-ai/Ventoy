@@ -4,7 +4,7 @@
 set -eu
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 5 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media|original-boot|original-overlay|linux-handoff]]" >&2
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media|original-boot|original-overlay|original-overlay-boot|linux-handoff]]" >&2
   exit 2
 fi
 
@@ -15,7 +15,7 @@ efi_probe=${4:-}
 efi_mode=${5:-diagnostic}
 case "$efi_mode" in
   diagnostic|linux-handoff) ;;
-  original|original-negative|original-media|original-boot|original-overlay) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
+  original|original-negative|original-media|original-boot|original-overlay|original-overlay-boot) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
   *) echo "Unknown EFI mode: $efi_mode" >&2; exit 2 ;;
 esac
 if [ -n "$efi_probe" ] && [ ! -s "$efi_probe" ]; then
@@ -32,8 +32,17 @@ if [ "$efi_mode" = linux-handoff ]; then
   test -s "${VTOY_LINUX_KERNEL:-}" || { echo 'Missing original Linux kernel binary' >&2; exit 4; }
   test -s "${VTOY_LINUX_INITRD:-}" || { echo 'Missing experimental Linux initramfs' >&2; exit 4; }
 fi
-if [ "$efi_mode" = original-boot ] || [ "$efi_mode" = original-overlay ]; then
+if [ "$efi_mode" = original-boot ] || [ "$efi_mode" = original-overlay ] ||
+   [ "$efi_mode" = original-overlay-boot ]; then
   test -s "${VTOY_ISO_DRIVER_EFI:-}" || { echo 'Missing original Ventoy ISO9660 EFI driver' >&2; exit 4; }
+fi
+
+if [ "$efi_mode" = original-overlay-boot ]; then
+  test -s "${VTOY_BOOTABLE_ISO:-}" || { echo 'Original bootable ISO required' >&2; exit 4; }
+  test -s "${VTOY_INITRD_OVERLAY:-}" || { echo 'Replacement initramfs required' >&2; exit 4; }
+  test "$(wc -c < "$VTOY_INITRD_OVERLAY")" -le 65536 || { echo 'Oversized initramfs' >&2; exit 4; }
+  [ "$source_fs" = fat32 ] || { echo 'Bootable ISO fixture requires FAT32 source' >&2; exit 4; }
+  min_extents=1
 fi
 if [ "$efi_mode" = original-boot ]; then
   test -s "${VTOY_ISO_BOOT_EFI:-}" || { echo 'Missing genuine EFI payload for ISO' >&2; exit 4; }
@@ -136,6 +145,27 @@ if [ -n "$vt_probe_chain_addr" ]; then
   echo VTOY_ORIGINAL_BOOT_STATUS=$vt_original_boot_probe
 else
   echo VTOY_ORIGINAL_ISO_BOOT_MISSING
+fi
+EOF
+
+elif [ -n "$efi_probe" ] && [ "$efi_mode" = original-overlay-boot ]; then
+  cat >> "$output/runtime.cfg" <<'EOF'
+echo VT080_ORIGINAL_VENTOY_OVERLAY_BOOT_BEGIN
+vt_overlay_probe ($isopart)/vt-map-image.iso ($bootpart)/vt-overlay.bin boot-hook
+if [ -n "$vt_probe_chain_addr" ]; then
+  set VTOY_MBOOT_SECONDARY=1
+  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size gptguid:$vt_probe_gpt_guid env_param=$vt_probe_env_addr mboot_overlay_probe=1 mboot_boot_probe=1
+  if boot; then
+    echo VT080_ORIGINAL_VENTOY_OVERLAY_BOOT_RETURNED
+  else
+    echo VT080_ORIGINAL_VENTOY_OVERLAY_BOOT_FAILED
+  fi
+  echo VT080_SOURCE_STATUS=$vt_original_source_probe
+  echo VT080_ISO_DRIVER=$vt_original_iso_driver
+  echo VT080_MEDIA_STATUS=$vt_original_media_probe
+  echo VT080_BOOT_STATUS=$vt_original_boot_probe
+else
+  echo VT080_ORIGINAL_VENTOY_OVERLAY_BOOT_MISSING
 fi
 EOF
 elif [ -n "$efi_probe" ] && [ "$efi_mode" = original-overlay ]; then
@@ -259,6 +289,10 @@ done
 mmd -i "$output/boot-part.img" ::/EFI ::/EFI/BOOT ::/grub ::/grub/x86_64-efi
 mcopy -i "$output/boot-part.img" "$output/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$output/boot-part.img" "$module" ::/grub/x86_64-efi/ventoy_source_probe.mod
+if [ "$efi_mode" = original-overlay-boot ]; then
+  cp "$VTOY_INITRD_OVERLAY" "$output/vt-overlay.bin"
+  mcopy -i "$output/boot-part.img" "$output/vt-overlay.bin" ::/vt-overlay.bin
+fi
 if [ "$efi_mode" = original-overlay ]; then
   # Replacement exists ONLY on the synthetic boot ESP fixture.
   python3 - "$output/vt-overlay.bin" <<'PYOVERLAY'
@@ -279,7 +313,8 @@ fi
 if [ -n "$efi_probe" ]; then
   mcopy -i "$output/boot-part.img" "$efi_probe" ::/EFI/BOOT/VTOYDIAG.EFI
 fi
-if [ "$efi_mode" = original-boot ] || [ "$efi_mode" = original-overlay ]; then
+if [ "$efi_mode" = original-boot ] || [ "$efi_mode" = original-overlay ] ||
+   [ "$efi_mode" = original-overlay-boot ]; then
   mmd -i "$output/boot-part.img" ::/ventoy-secondary ::/ventoy-secondary/ventoy
   mcopy -i "$output/boot-part.img" "$VTOY_ISO_DRIVER_EFI" \
     ::/ventoy-secondary/ventoy/iso9660_x64.efi
