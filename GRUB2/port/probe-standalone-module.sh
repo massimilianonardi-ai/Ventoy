@@ -24,6 +24,7 @@ mkdir -p "$output/source/grub-core/ventoy"
 cp "$here/probe-source.c" "$output/source/grub-core/ventoy/source_probe.c"
 cp "$here/probe-extents.c" "$output/source/grub-core/ventoy/extent_probe.c"
 cp "$here/probe-handoff.c" "$output/source/grub-core/ventoy/handoff_probe.c"
+cp "$here/probe-overlay.c" "$output/source/grub-core/ventoy/overlay_probe.c"
 # Use upstream Ventoy ABI types; only the added .mod is compiled.
 cp "$here/../MOD_SRC/grub-2.04/include/grub/ventoy.h" "$output/source/include/grub/ventoy.h"
 
@@ -35,6 +36,7 @@ module = {
   common = ventoy/source_probe.c;
   common = ventoy/extent_probe.c;
   common = ventoy/handoff_probe.c;
+  common = ventoy/overlay_probe.c;
 };
 EOF
 
