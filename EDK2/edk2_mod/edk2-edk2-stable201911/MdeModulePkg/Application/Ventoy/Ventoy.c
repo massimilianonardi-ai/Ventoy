@@ -936,12 +936,14 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
     UINTN InfoSize, ReadSize, ExtraSize;
     UINT32 ExpectedSize;
     UINTN Matches = 0;
+    CONST CHAR8 *Stage = "initial";
 
     if (!gMbootOverlayProbe || !g_chain ||
         g_chain->override_chunk_num != 2 || g_chain->virt_chunk_num != 1 ||
         !g_override_chunk || !g_virt_chunk ||
         !gBlockData.Path || !gBlockData.DevicePathCompareLen)
     {
+        grub_env_set("vt_original_iso_file_stage", "bad-input");
         return EFI_INVALID_PARAMETER;
     }
 
@@ -951,12 +953,14 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
                    ((UINT32)g_override_chunk[1].override_data[11] << 24);
     if (ExpectedSize == 0 || ExpectedSize > 65536)
     {
+        grub_env_set("vt_original_iso_file_stage", "bad-length");
         return EFI_COMPROMISED_DATA;
     }
     Expected = (UINT8 *)g_virt_chunk + g_virt_chunk[0].mem_sector_offset;
     ReadBuf = AllocatePool(ExpectedSize + 1);
     if (!ReadBuf)
     {
+        grub_env_set("vt_original_iso_file_stage", "allocation-failed");
         return EFI_OUT_OF_RESOURCES;
     }
 
@@ -965,9 +969,11 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
                                      NULL, &Count, &Handles);
     if (EFI_ERROR(Status))
     {
+        Stage = "locate-filesystems";
         goto done;
     }
 
+    Stage = "no-matching-cd-filesystem";
     Status = EFI_NOT_FOUND;
     for (i = 0; i < Count; i++)
     {
@@ -982,6 +988,7 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
         Matches++;
         if (Matches != 1)
         {
+            Stage = "multiple-cd-filesystems";
             Status = EFI_SECURITY_VIOLATION;
             goto done;
         }
@@ -990,11 +997,13 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
                                      (VOID **)&Fs);
         if (EFI_ERROR(Status) || !Fs)
         {
+            Stage = "get-filesystem-protocol";
             goto done;
         }
         Status = Fs->OpenVolume(Fs, &Root);
         if (EFI_ERROR(Status) || !Root)
         {
+            Stage = "open-volume";
             goto done;
         }
 
@@ -1002,6 +1011,7 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
                             EFI_FILE_MODE_READ, 0);
         if (EFI_ERROR(Status) || !File)
         {
+            Stage = "open-target-file";
             goto done;
         }
 
@@ -1011,18 +1021,21 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
             InfoSize < SIZE_OF_EFI_FILE_INFO + sizeof(CHAR16) ||
             InfoSize > 4096)
         {
+            Stage = "get-file-info-size";
             Status = EFI_COMPROMISED_DATA;
             goto done;
         }
         Info = AllocatePool(InfoSize);
         if (!Info)
         {
+            Stage = "allocate-file-info";
             Status = EFI_OUT_OF_RESOURCES;
             goto done;
         }
         Status = File->GetInfo(File, &gEfiFileInfoGuid, &InfoSize, Info);
         if (EFI_ERROR(Status) || Info->FileSize != ExpectedSize)
         {
+            Stage = "replacement-size-mismatch";
             Status = EFI_COMPROMISED_DATA;
             goto done;
         }
@@ -1032,6 +1045,7 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
         if (EFI_ERROR(Status) || ReadSize != ExpectedSize ||
             CompareMem(ReadBuf, Expected, ExpectedSize))
         {
+            Stage = "replacement-content-mismatch";
             Status = EFI_COMPROMISED_DATA;
             goto done;
         }
@@ -1039,10 +1053,12 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
         Status = File->Read(File, &ExtraSize, ReadBuf);
         if (EFI_ERROR(Status) || ExtraSize != 0)
         {
+            Stage = "file-eof-mismatch";
             Status = EFI_COMPROMISED_DATA;
         }
         else
         {
+            Stage = "file-content-and-eof-verified";
             Status = EFI_SUCCESS;
         }
         goto done;
@@ -1053,6 +1069,7 @@ STATIC EFI_STATUS ventoy_probe_secondary_overlay_file(VOID)
     }
 
 done:
+    grub_env_set("vt_original_iso_file_stage", Stage);
     if (Info)
     {
         FreePool(Info);
