@@ -31,6 +31,7 @@ ln -s busybox "$root/bin/sh"
 gcc -O2 -static -Wall -Wextra -Werror \
     -o "$root/bin/map-consumer" "$here/probe-linux-efi-consumer.c"
 cp "$(command -v dmsetup)" "$root/usr/sbin/dmsetup"
+chmod 0755 "$root/usr/sbin/dmsetup"
 
 # Copy the actual shared-library closure and loader for dmsetup, without
 # assuming a particular libdevmapper or Ubuntu glibc filesystem layout.
@@ -53,7 +54,9 @@ for pathname in sorted(paths):
         raise SystemExit(f'missing runtime library: {pathname}')
     dest = root / pathname.lstrip('/')
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src, dest)
+    shutil.copy2(src, dest)
+    if 'ld-linux' in src.name and not (dest.stat().st_mode & 0o111):
+        raise SystemExit(f'guest ELF loader not executable: {dest}')
 print(f'guest_dmsetup_libraries={len(paths)}')
 PY
 
