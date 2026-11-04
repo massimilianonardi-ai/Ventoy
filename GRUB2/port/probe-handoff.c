@@ -14,6 +14,7 @@
 #include <grub/ventoy.h>
 #include <grub/efi/efi.h>
 #include <grub/efi/api.h>
+#include <grub/command.h>
 
 /* Keep both original Ventoy ABI objects in GRUB memory until StartImage
  * returns or this module is unloaded. Neither survives GRUB teardown. */
@@ -41,10 +42,15 @@ struct __attribute__ ((packed)) vt_efi_map_payload
   ventoy_img_chunk chunks[1]; /* ORIGINAL upstream layout */
 };
 
+void vt_register_efi_publish_probe (void);
+void vt_unregister_efi_publish_probe (void);
 static grub_command_t vt_efi_publish_command;
-static const grub_efi_guid_t vt_efi_probe_guid =
-  { 0x0e5e24d4, 0x168b, 0x4f9e,
-    { 0xa3, 0x97, 0x09, 0x51, 0xf7, 0x57, 0x11, 0x1e } };
+/* The GUID is encoded in UEFI wire byte order to remain compatible
+ * with distro GRUB versions that represent grub_efi_guid_t differently. */
+static const grub_uint8_t vt_efi_probe_guid_bytes[16] = {
+  0xd4, 0x24, 0x5e, 0x0e, 0x8b, 0x16, 0x9e, 0x4f,
+  0xa3, 0x97, 0x09, 0x51, 0xf7, 0x57, 0x11, 0x1e
+};
 static grub_efi_char16_t vt_efi_probe_var[] =
   { 'V', 't', 'D', 'm', 'M', 'a', 'p', 'P', 'r', 'o', 'b', 'e', 0 };
 
@@ -72,6 +78,7 @@ vt_publish_efi_map (grub_command_t command __attribute__ ((unused)),
   grub_size_t data_bytes;
   grub_uint32_t i;
   grub_efi_status_t status;
+  grub_efi_guid_t probe_guid;
   static const grub_uint8_t magic[] = "VTDMAP01";
 
   if (argc != 0)
@@ -122,14 +129,21 @@ vt_publish_efi_map (grub_command_t command __attribute__ ((unused)),
       grub_free (payload);
       return grub_error (GRUB_ERR_BAD_DEVICE, "UEFI Runtime Services absent");
     }
+  if (sizeof (probe_guid) != sizeof (vt_efi_probe_guid_bytes))
+    {
+      grub_free (payload);
+      return grub_error (GRUB_ERR_BAD_DEVICE,
+                         "unsupported GRUB EFI GUID layout");
+    }
+  grub_memcpy (&probe_guid, vt_efi_probe_guid_bytes, sizeof (probe_guid));
   status = grub_efi_system_table->runtime_services->set_variable
-    (vt_efi_probe_var, (grub_efi_guid_t *) &vt_efi_probe_guid,
+    (vt_efi_probe_var, &probe_guid,
      GRUB_EFI_VARIABLE_BOOTSERVICE_ACCESS
      | GRUB_EFI_VARIABLE_RUNTIME_ACCESS,
      data_bytes, payload);
   grub_free (payload);
   if (status != GRUB_EFI_SUCCESS)
-    return grub_error (GRUB_ERR_IO, "UEFI SetVariable returned %llu",
+    return grub_error (GRUB_ERR_BAD_DEVICE, "UEFI SetVariable returned %llu",
                        (unsigned long long) status);
   grub_printf ("VT_EFI_MAP_PUBLISHED count=%u bytes=%lu iso_bytes=%llu\\n",
                (unsigned) chain->img_chunk_num, (unsigned long) data_bytes,
