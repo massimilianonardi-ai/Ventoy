@@ -147,6 +147,9 @@ chmod 0755 "$root/init" "$root/modules.load"
   find . -print0 | cpio -o -0 --format=newc 2>/dev/null | gzip -1
 ) > "$out/initrd.img"
 [ -s "$out/initrd.img" ]
+# The installed Ubuntu /boot/vmlinuz is root-readable; the disposable
+# copies must be readable by the unprivileged QEMU/GRUB fixture builder.
+chmod 0644 "$out/vmlinuz" "$out/initrd.img"
 {
   printf 'linux_version=%s\n' "$version"
   printf 'kernel_original=%s\n' "$kernel"
