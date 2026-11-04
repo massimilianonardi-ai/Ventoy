@@ -78,7 +78,7 @@ vt_publish_efi_map (grub_command_t command __attribute__ ((unused)),
   grub_size_t data_bytes;
   grub_uint32_t i;
   grub_efi_status_t status;
-  grub_efi_guid_t probe_guid;
+  grub_guid_t probe_guid;
   static const grub_uint8_t magic[] = "VTDMAP01";
 
   if (argc != 0)
