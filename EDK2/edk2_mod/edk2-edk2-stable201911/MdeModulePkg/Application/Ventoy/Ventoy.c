@@ -620,6 +620,7 @@ STATIC BOOLEAN ventoy_overlay_probe_chain_valid(VOID)
         g_chain->virt_img_size_in_bytes > g_chain->real_img_size_in_bytes + 65536 ||
         g_chain->virt_img_size_in_bytes % 2048)
     {
+        grub_env_set("vt_overlay_probe_validation", "stage-1");
         return FALSE;
     }
 
@@ -630,6 +631,7 @@ STATIC BOOLEAN ventoy_overlay_probe_chain_valid(VOID)
     if (End != gMbootChainBytes ||
         RealSectors > 0xffffffffULL || VirtualSectors > 0xffffffffULL)
     {
+        grub_env_set("vt_overlay_probe_validation", "stage-2");
         return FALSE;
     }
 
@@ -652,6 +654,7 @@ STATIC BOOLEAN ventoy_overlay_probe_chain_valid(VOID)
         Virt->remap_sector_start || Virt->remap_sector_end ||
         Virt->org_sector_start)
     {
+        grub_env_set("vt_overlay_probe_validation", "stage-3");
         return FALSE;
     }
 
@@ -671,9 +674,11 @@ STATIC BOOLEAN ventoy_overlay_probe_chain_valid(VOID)
             Ov[1].override_data[12 + i] !=
              (UINT8)(ReplaceSize >> (8 * (3 - i))))
         {
-            return FALSE;
+            grub_env_set("vt_overlay_probe_validation", "stage-4");
+        return FALSE;
         }
     }
+    grub_env_set("vt_overlay_probe_validation", "chain-valid");
     return TRUE;
 }
 
@@ -847,6 +852,11 @@ STATIC EFI_STATUS ventoy_find_secondary_source(VOID)
     }
     if (Matches != 1)
     {
+        if (gMbootOverlayProbe)
+        {
+            grub_env_set("vt_overlay_probe_validation",
+                         Matches ? "ambiguous-gpt" : "no-gpt-match");
+        }
         Status = Matches ? EFI_SECURITY_VIOLATION : EFI_NOT_FOUND;
         goto done;
     }
