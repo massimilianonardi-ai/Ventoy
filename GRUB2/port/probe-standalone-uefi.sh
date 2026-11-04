@@ -4,7 +4,7 @@
 set -eu
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 5 ]; then
-  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media|original-boot|linux-handoff]]" >&2
+  echo "usage: $0 COMPILED-MOD OUTPUT-DIR [fat32|ext4|ext4-gpt3] [EFI-PROBE [diagnostic|original|original-negative|original-media|original-boot|original-overlay|linux-handoff]]" >&2
   exit 2
 fi
 
@@ -15,7 +15,7 @@ efi_probe=${4:-}
 efi_mode=${5:-diagnostic}
 case "$efi_mode" in
   diagnostic|linux-handoff) ;;
-  original|original-negative|original-media|original-boot) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
+  original|original-negative|original-media|original-boot|original-overlay) [ -n "$efi_probe" ] || { echo 'Original EFI binary required' >&2; exit 2; } ;;
   *) echo "Unknown EFI mode: $efi_mode" >&2; exit 2 ;;
 esac
 if [ -n "$efi_probe" ] && [ ! -s "$efi_probe" ]; then
@@ -136,6 +136,27 @@ else
   echo VTOY_ORIGINAL_ISO_BOOT_MISSING
 fi
 EOF
+elif [ -n "$efi_probe" ] && [ "$efi_mode" = original-overlay ]; then
+  cat >> "$output/runtime.cfg" <<'EOF'
+echo VTOY_ORIGINAL_OVERLAY_BEGIN
+vt_overlay_probe ($isopart)/vt-map-image.iso ($bootpart)/vt-overlay.bin
+if [ -n "$vt_probe_chain_addr" ]; then
+  set VTOY_MBOOT_SECONDARY=1
+  chainloader ($bootpart)/EFI/BOOT/VTOYDIAG.EFI mem:$vt_probe_chain_addr:size:$vt_probe_chain_size gptguid:$vt_probe_gpt_guid env_param=$vt_probe_env_addr mboot_overlay_probe=1
+  if boot; then
+    echo VTOY_ORIGINAL_OVERLAY_RETURNED
+  else
+    echo VTOY_ORIGINAL_OVERLAY_FAILED
+  fi
+  echo VTOY_ORIGINAL_SOURCE_STATUS=$vt_original_source_probe
+  echo VTOY_ORIGINAL_MEDIA_STATUS=$vt_original_media_probe
+  echo VTOY_ORIGINAL_MEDIA_PUBLISHED=$vt_original_virtual_published
+  echo VTOY_ORIGINAL_MEDIA_CRC32=$vt_original_virtual_crc32
+  echo VTOY_ORIGINAL_MEDIA_UNINSTALLED=$vt_original_virtual_uninstalled
+else
+  echo VTOY_ORIGINAL_OVERLAY_MISSING
+fi
+EOF
 elif [ -n "$efi_probe" ] && [ "$efi_mode" = original-media ]; then
   cat >> "$output/runtime.cfg" <<'EOF'
 echo VTOY_ORIGINAL_MEDIA_BEGIN
@@ -233,6 +254,19 @@ done
 mmd -i "$output/boot-part.img" ::/EFI ::/EFI/BOOT ::/grub ::/grub/x86_64-efi
 mcopy -i "$output/boot-part.img" "$output/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$output/boot-part.img" "$module" ::/grub/x86_64-efi/ventoy_source_probe.mod
+if [ "$efi_mode" = original-overlay ]; then
+  # Replacement exists ONLY on the synthetic boot ESP fixture.
+  python3 - "$output/vt-overlay.bin" <<'PYOVERLAY'
+import hashlib
+from pathlib import Path
+import sys
+data = b'VT_PROBE_ISO_REPLACEMENT\n'
+data += b''.join(hashlib.sha256(i.to_bytes(4, 'little')).digest()
+                 for i in range(384))
+Path(sys.argv[1]).write_bytes(data)
+PYOVERLAY
+  mcopy -i "$output/boot-part.img" "$output/vt-overlay.bin" ::/vt-overlay.bin
+fi
 if [ "$efi_mode" = linux-handoff ]; then
   mcopy -i "$output/boot-part.img" "$VTOY_LINUX_KERNEL" ::/vmlinuz
   mcopy -i "$output/boot-part.img" "$VTOY_LINUX_INITRD" ::/initrd.img
@@ -466,7 +500,68 @@ if grep -q 'VTOY_EXTENT_MAP_DONE' "$output/qemu.log" &&
     echo "qemu_exit=$qemu_status"
   } | tee "$output/runtime-result.txt"
   if [ -n "$efi_probe" ]; then
-    if [ "$efi_mode" = original-negative ]; then
+    if [ "$efi_mode" = original-overlay ]; then
+      python3 "$(dirname "$0")/verify-extent-map.py" \
+        "$output/qemu.log" "$output/vt-map-image.iso" \
+        "$output/iso-disk.img" "$output/iso-map-verification.txt" \
+        "$min_extents" "$part_num"
+      # Independent ISO9660 metadata+payload oracle, no trust in the
+      # Ventoy module's reported virtual-sector count or its CRC.
+      expected_crc=$(python3 - "$output/vt-map-image.iso" "$output/vt-overlay.bin" <<'PYCRC'
+from pathlib import Path
+import sys
+import zlib
+image = bytearray(Path(sys.argv[1]).read_bytes())
+payload = Path(sys.argv[2]).read_bytes()
+assert len(image) > 18*2048 and len(image)%2048 == 0 and payload
+pvd = image[16*2048:17*2048]
+assert pvd[:7] == b'\x01CD001\x01'
+start = int.from_bytes(pvd[158:162], 'little')
+size = int.from_bytes(pvd[166:170], 'little')
+assert 0 < size <= 2048
+base = start*2048
+cursor = 0
+entry = None
+while cursor < size:
+    length = image[base+cursor]
+    if length == 0:
+        break
+    assert 34 <= length <= size-cursor
+    name_bytes = image[base+cursor+32]
+    name = image[base+cursor+33:base+cursor+33+name_bytes]
+    if name == b'PAYLOAD.BIN;1':
+        entry = base + cursor + 2
+        break
+    cursor += length
+assert entry is not None
+def both32(number):
+    return number.to_bytes(4, 'little')+number.to_bytes(4, 'big')
+old_sectors = len(image)//2048
+new_sectors = old_sectors + (len(payload)+2047)//2048
+image[16*2048+80:16*2048+88] = both32(new_sectors)
+image[entry:entry+16] = both32(old_sectors)+both32(len(payload))
+image.extend(payload.ljust((new_sectors-old_sectors)*2048, b'\0'))
+assert len(image) == new_sectors*2048
+print(f'{zlib.crc32(image):08x}')
+PYCRC
+)
+      if ! grep -q 'VT_OVERLAY_ABI_READY' "$output/qemu.log" ||
+         ! grep -q 'VT_OVERLAY_PREPARED' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_OVERLAY_RETURNED' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_SOURCE_STATUS=selected' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_MEDIA_STATUS=verified' "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_MEDIA_PUBLISHED=yes' "$output/qemu.log" ||
+         ! grep -q "VTOY_ORIGINAL_MEDIA_CRC32=$expected_crc" "$output/qemu.log" ||
+         ! grep -q 'VTOY_ORIGINAL_MEDIA_UNINSTALLED=yes' "$output/qemu.log" ||
+         grep -q 'VTOY_ORIGINAL_OVERLAY_FAILED' "$output/qemu.log"; then
+        echo 'original_efi_iso_overlay=failed' >&2
+        tail -n 125 "$output/qemu.log" >&2
+        exit 8
+      fi
+      echo 'original_efi_iso_overlay=passed' >> "$output/runtime-result.txt"
+      echo 'original_efi_virtual_blockio_full_crc32=verified' >> "$output/runtime-result.txt"
+      echo 'original_efi_iso_file_open=not-tested' >> "$output/runtime-result.txt"
+    elif [ "$efi_mode" = original-negative ]; then
       python3 "$(dirname "$0")/verify-extent-map.py" \
         "$output/qemu.log" "$output/vt-map-image.iso" \
         "$output/iso-disk.img" "$output/iso-map-verification.txt" \
