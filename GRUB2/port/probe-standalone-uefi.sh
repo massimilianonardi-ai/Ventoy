@@ -149,6 +149,13 @@ fi
 EOF
 
 elif [ -n "$efi_probe" ] && [ "$efi_mode" = original-overlay-boot ]; then
+  if [ "${VTOY_REQUIRE_EFI_MAP:-0}" = 1 ]; then
+    cat >> "$output/runtime.cfg" <<'EOF'
+echo VT081_EFI_MAP_EXPORT_BEGIN
+vt_publish_efi_map
+echo VT081_EFI_MAP_EXPORT_DONE
+EOF
+  fi
   cat >> "$output/runtime.cfg" <<'EOF'
 echo VT080_ORIGINAL_VENTOY_OVERLAY_BOOT_BEGIN
 vt_overlay_probe ($isopart)/vt-map-image.iso ($bootpart)/vt-overlay.bin boot-hook
@@ -259,7 +266,15 @@ grub-mkimage --format=x86_64-efi \
 for target in boot iso; do
   part="$output/$target-part.img"
   disk="$output/$target-disk.img"
-  truncate -s 64M "$part"
+  source_part_mb=64
+  source_disk_mb=96
+  if [ "$target" = iso ] && [ "${VTOY_REQUIRE_EFI_MAP:-0}" = 1 ] &&
+     [ "$efi_mode" = original-overlay-boot ]; then
+    # Reserve space for the *same* ISO with real distribution kernel modules.
+    source_part_mb=192
+    source_disk_mb=256
+  fi
+  truncate -s "${source_part_mb}M" "$part"
   if [ "$target" = iso ] && [ "$part_num" = 3 ]; then
     # Disposable m-boot-like GPT geometry: p1 BIOS, p2 EFI, p3 data.
     truncate -s 128M "$disk"
@@ -273,12 +288,12 @@ for target in boot iso; do
       ''|*[!0-9]*) echo 'Could not locate GPT3 source sector' >&2; exit 6 ;;
     esac
   else
-    truncate -s 96M "$disk"
+    truncate -s "${source_disk_mb}M" "$disk"
     type=8300
     if [ "$target" = boot ]; then
       type=ef00
     fi
-    sgdisk --clear --new=1:2048:+64M --typecode="1:$type" "$disk" \
+    sgdisk --clear --new=1:2048:+"${source_part_mb}M" --typecode="1:$type" "$disk" \
       > "$output/$target-gpt.log" 2>&1
   fi
   if [ "$target" = boot ] || [ "$source_fs" = fat32 ]; then
@@ -533,6 +548,17 @@ if [ "$efi_mode" = original-overlay-boot ]; then
     exit 9
   fi
   original=$(sha256sum "$VTOY_BOOTABLE_ISO" | awk '{print $1}')
+  if [ "${VTOY_REQUIRE_EFI_MAP:-0}" = 1 ]; then
+    if ! grep -q 'VT_EFI_MAP_PUBLISHED' "$output/qemu.log" ||
+       ! grep -q 'VT_LINUX_MAP_CONSUMED' "$output/qemu.log" ||
+       ! grep -q 'VT_LINUX_ISO_IDENTITY_PASS' "$output/qemu.log" ||
+       ! grep -q 'VT_LINUX_HANDOFF_PASS' "$output/qemu.log" ||
+       ! grep -q "VT_LINUX_ISO_SHA256=$original" "$output/qemu.log"; then
+      echo 'VT081_ORIGINAL_LOADER_EFI_TO_LINUX_DM_FAILED' >&2
+      tail -n 140 "$output/qemu.log" >&2
+      exit 10
+    fi
+  fi
   fixture=$(sha256sum "$output/vt-map-image.iso" | awk '{print $1}')
   [ "$original" = "$fixture" ] || { echo 'Original source ISO changed' >&2; exit 9; }
   python3 "$(dirname "$0")/verify-extent-map.py" \
@@ -545,6 +571,9 @@ if [ "$efi_mode" = original-overlay-boot ]; then
     echo 'vt080_linux_kernel=distribution_unmodified'
     echo 'vt080_original_initrd_hook_executed=no'
     echo 'vt080_overlay_initrd_hook_executed=yes'
+    if [ "${VTOY_REQUIRE_EFI_MAP:-0}" = 1 ]; then
+      echo 'vt081_original_iso_reconstructed_in_linux=passed'
+    fi
   } > "$output/runtime-result.txt"
   exit 0
 fi
