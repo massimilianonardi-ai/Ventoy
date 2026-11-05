@@ -43,6 +43,15 @@ if [ "$efi_mode" = original-overlay-boot ]; then
   test "$(wc -c < "$VTOY_INITRD_OVERLAY")" -le 65536 || { echo 'Oversized initramfs' >&2; exit 4; }
   [ "$source_fs" = fat32 ] || { echo 'Bootable ISO fixture requires FAT32 source' >&2; exit 4; }
   min_extents=1
+  if [ "${VTOY_REQUIRE_FRAGMENTED_ISO:-0}" = 1 ]; then
+    # F-03: a one-extent virtual-ISO boot must never count as success.
+    min_extents=2
+  fi
+fi
+if [ "${VTOY_REQUIRE_FRAGMENTED_ISO:-0}" = 1 ] &&
+   { [ "$efi_mode" != original-overlay-boot ] || [ "$source_fs" != fat32 ]; }; then
+  echo 'Fragmented original ISO requires original-overlay-boot on FAT32' >&2
+  exit 2
 fi
 if [ "$efi_mode" = original-boot ]; then
   test -s "${VTOY_ISO_BOOT_EFI:-}" || { echo 'Missing genuine EFI payload for ISO' >&2; exit 4; }
@@ -343,7 +352,20 @@ echo 'source-location fixture, not a bootable ISO' > "$output/vt-probe-image.iso
 # Use the exact independently generated, boot-tested PoC 079 ISO.
 # Its original bytes must never be rewritten by this test harness.
 if [ "$efi_mode" = original-overlay-boot ]; then
-  cp "$VTOY_BOOTABLE_ISO" "$output/vt-map-image.iso"
+  if [ "${VTOY_REQUIRE_FRAGMENTED_ISO:-0}" = 1 ]; then
+    # Never turn zero-filled portions of the original into sparse host holes.
+    cp --sparse=never "$VTOY_BOOTABLE_ISO" "$output/vt-map-image.iso"
+    python3 - "$output/vt-map-image.iso" <<'PYDENSE'
+import os
+import sys
+source = os.stat(sys.argv[1])
+if source.st_size <= 0 or source.st_blocks * 512 < source.st_size:
+    raise SystemExit("F-03 requires a fully allocated, non-sparse ISO file")
+print(f"VT_F03_NONSparse_ISO bytes={source.st_size} allocated={source.st_blocks * 512}")
+PYDENSE
+  else
+    cp "$VTOY_BOOTABLE_ISO" "$output/vt-map-image.iso"
+  fi
 else
 # Create a genuine ISO9660 filesystem with deterministic, nonuniform data.
 # The bytes are intentionally NOT a hand-written fake ISO header.
@@ -446,6 +468,22 @@ fi # Never rewrite the original bootable ISO's system area.
 if [ "$source_fs" = fat32 ]; then
   mcopy -i "$output/iso-part.img" "$output/vt-probe-image.iso" ::/vt-probe-image.iso
 
+  if [ "$efi_mode" = original-overlay-boot ] &&
+     [ "${VTOY_REQUIRE_FRAGMENTED_ISO:-0}" = 1 ]; then
+    # Reserve a 16 MiB interior hole, with less than one ISO available at
+    # the FAT tail: copying the actual ~40 MiB ISO MUST cross the gap.
+    # These are disposable ordinary FAT32 image contents only.
+    truncate -s 8M "$output/filler-A.bin"
+    truncate -s 16M "$output/filler-B.bin"
+    truncate -s 8M "$output/filler-C.bin"
+    truncate -s 120M "$output/filler-D.bin"
+    mcopy -i "$output/iso-part.img" "$output/filler-A.bin" ::/A.FILL
+    mcopy -i "$output/iso-part.img" "$output/filler-B.bin" ::/B.FILL
+    mcopy -i "$output/iso-part.img" "$output/filler-C.bin" ::/C.FILL
+    mcopy -i "$output/iso-part.img" "$output/filler-D.bin" ::/D.FILL
+    mdel -i "$output/iso-part.img" ::/B.FILL
+    echo VT_F03_FAT_FRAGMENTATION_SEEDED
+  fi
   if [ "$efi_mode" != original-overlay-boot ]; then
   # Force noncontiguous FAT allocation before copying the real ISO.
   truncate -s 1M "$output/filler-A.bin"
@@ -515,6 +553,12 @@ PY
     -device virtio-blk-pci,drive=rival,bootindex=3
 fi
 
+# Establish full raw source-disk identity before the QEMU firmware run;
+# -snapshot must leave this *entire* disposable GPT image unchanged.
+if [ "${VTOY_REQUIRE_FRAGMENTED_ISO:-0}" = 1 ]; then
+  sha256sum "$output/iso-disk.img" > "$output/iso-disk-sha256.before"
+fi
+
 # OVMF runs without Secure Boot on disposable file-backed virtual disks.
 set +e
 timeout 90 qemu-system-x86_64 -machine q35 -accel tcg -m 1024 -smp 2 \
@@ -528,6 +572,16 @@ timeout 90 qemu-system-x86_64 -machine q35 -accel tcg -m 1024 -smp 2 \
   > "$output/qemu.log" 2>&1
 qemu_status=$?
 set -e
+if [ "${VTOY_REQUIRE_FRAGMENTED_ISO:-0}" = 1 ]; then
+  before=$(awk '{print $1}' "$output/iso-disk-sha256.before")
+  after=$(sha256sum "$output/iso-disk.img" | awk '{print $1}')
+  [ "$before" = "$after" ] || {
+    echo 'F-03: disposable GPT source disk changed during QEMU' >&2
+    exit 9
+  }
+  printf 'source_disk_sha256_before=%s\nsource_disk_sha256_after=%s\n' \
+    "$before" "$after" > "$output/source-disk-integrity.txt"
+fi
 
 if [ "$efi_mode" = original-overlay-boot ]; then
   # This fixture puts the kernel ONLY inside the original ISO:
@@ -565,6 +619,45 @@ if [ "$efi_mode" = original-overlay-boot ]; then
     "$output/qemu.log" "$output/vt-map-image.iso" \
     "$output/iso-disk.img" "$output/iso-map-verification.txt" \
     "$min_extents" "$part_num"
+  if [ "${VTOY_REQUIRE_FRAGMENTED_ISO:-0}" = 1 ]; then
+    # Correlate the map seen by the firmware, original source parser, and
+    # post-ExitBootServices Linux consumer, not only host-derived records.
+    python3 - "$output/qemu.log" "$output/iso-map-verification.txt" \
+        "$output/f03-runtime-verification.txt" <<'PYF03'
+from pathlib import Path
+import re
+import sys
+
+log = " ".join(Path(sys.argv[1]).read_text(errors="replace").split())
+facts = dict(line.split("=", 1) for line in
+             Path(sys.argv[2]).read_text().splitlines() if "=" in line)
+count = int(facts["extent_count"])
+if count < 2 or int(facts["physical_discontinuities"]) < 1:
+    raise SystemExit("F-03: ISO is not physically fragmented")
+published = re.findall(r"VT_EFI_MAP_PUBLISHED count=(\d+)", log)
+consumed = re.findall(r"VT_LINUX_MAP_CONSUMED count=(\d+)", log)
+if published != [str(count)] or consumed != [str(count)]:
+    raise SystemExit(f"F-03: EFI/Linux count mismatch: {published}, {consumed}, {count}")
+for marker in ("VT079_UEFI_GRUB_STARTED", "VT079_UEFI_KERNEL_STARTING",
+               "VT079_LINUX_INITRAMFS_OVERLAY",
+               "VT_LINUX_ISO_IDENTITY_PASS", "VT_LINUX_HANDOFF_PASS"):
+    if marker not in log:
+        raise SystemExit(f"F-03: missing real guest transition marker {marker}")
+sha = facts["source_sha256"]
+if f"VT_LINUX_ISO_SHA256={sha}" not in log:
+    raise SystemExit("F-03: guest read-only dm source differs from original ISO")
+report = (f"f03_fragmented_efi_linux=passed\n"
+          f"extent_count={count}\n"
+          f"physical_discontinuities={facts['physical_discontinuities']}\n"
+          f"source_sha256={sha}\n"
+          "source_gpt_and_ventoy_abi=host_verified\n"
+          "efi_and_linux_extent_counts=matched\n"
+          "kernel=original_unmodified\n"
+          "read_only_dm_iso9660=verified_by_guest\n")
+Path(sys.argv[3]).write_text(report)
+print(report, end="")
+PYF03
+  fi
   {
     echo 'vt080_original_iso_efi_loader_to_linux_overlay=passed'
     echo "vt080_original_iso_sha256=$original"
