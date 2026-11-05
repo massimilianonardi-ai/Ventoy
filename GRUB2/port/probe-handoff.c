@@ -84,12 +84,14 @@ vt_publish_efi_map (grub_command_t command __attribute__ ((unused)),
   if (argc != 0)
     return grub_error (GRUB_ERR_BAD_ARGUMENT, "usage: vt_publish_efi_map");
   if (!chain || !guid_text || grub_strlen (guid_text) != 32
-      || chain->img_chunk_num == 0 || chain->img_chunk_num > 16384
+      || chain->img_chunk_num == 0 || chain->img_chunk_num > 640
       || chain->img_chunk_offset != sizeof (*chain)
       || chain->disk_sector_size != 512
       || chain->real_img_size_in_bytes != chain->virt_img_size_in_bytes)
     return grub_error (GRUB_ERR_BAD_ARGUMENT,
                        "no complete original Ventoy image map available");
+  /* The Linux consumer accepts no more than 640 original chunks.  Fail
+   * before EFI publication; do not publish maps the consumer must reject. */
   /* UEFI volatile variable size depends on firmware: stay deliberately
    * small for this transport proof, fail rather than silently truncate. */
   data_bytes = sizeof (*payload) - sizeof (payload->chunks)
